@@ -16,6 +16,7 @@ local IDA Pro installation and adds it to ``sys.path`` before importing.
 
 from __future__ import annotations
 
+import functools
 import glob
 import json
 import logging
@@ -23,14 +24,23 @@ import os
 import platform
 import sys
 
+import re_mcp
 from re_mcp import (  # noqa: F401  — re-export for backward compatibility
-    configure_logging,
     ensure_run_id,
     get_version,
     resolve_log_file,
 )
 
 log = logging.getLogger(__name__)
+
+#: Backend environment-variable prefix used for ``IDA_MCP_LOG_LEVEL``,
+#: ``IDA_MCP_LOG_DIR``, ``IDA_MCP_LOG_RUN`` and ``IDA_MCP_LABEL``.
+ENV_PREFIX = "IDA_MCP_"
+
+#: ``re_mcp.configure_logging`` bound to this backend's prefix.  Worker
+#: processes call this with no arguments, so binding the prefix here is
+#: what makes ``IDA_MCP_*`` variables take effect inside workers.
+configure_logging = functools.partial(re_mcp.configure_logging, env_prefix=ENV_PREFIX)
 
 
 def _find_idapro_wheel() -> str | None:

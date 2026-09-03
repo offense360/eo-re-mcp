@@ -295,7 +295,7 @@ close_database(database="second")                       # closes second
 
 ### Environment variables
 
-Each backend uses its own environment variable prefix (`IDA_MCP_` or `GHIDRA_MCP_`). The table below uses `<PREFIX>` as a placeholder.
+Each backend uses its own environment variable prefix (`IDA_MCP_` or `GHIDRA_MCP_`). The table below uses `<PREFIX>` as a placeholder. For the logging settings (`LOG_LEVEL`, `LOG_DIR`, `LOG_RUN`, `LABEL`), the backend-neutral `RE_MCP_*` name is accepted as an alias and `IDA_MCP_*` as a legacy fallback; when several are set, the backend prefix wins, then `RE_MCP_*`, then `IDA_MCP_*`.
 
 **Backend installation:**
 
