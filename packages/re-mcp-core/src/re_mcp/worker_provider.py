@@ -1275,6 +1275,7 @@ class WorkerPoolProvider(Provider):
             "database": worker.database_id,
             "file_path": worker.file_path,
             **worker.metadata,
+            "analyzed": worker.analyzed,
             "session_count": worker.session_count,
         }
         error = worker.spawn_error or worker.analysis_error
@@ -1597,6 +1598,13 @@ class WorkerPoolProvider(Provider):
 
             for w in worker.warnings:
                 log.warning("Worker %s open warning: %s", db_id, w)
+
+            # Seed the analyzed flag from the worker so an already-analyzed
+            # database is not re-analyzed by the first wait_for_analysis (#8).
+            # An explicit run_auto_analysis=True still forces a pass below.
+            if result_data.get("analyzed") and not run_auto_analysis:
+                worker.mark_analyzed()
+                log.info("Database %s reported as already analyzed", db_id)
 
             log.info("Database %s opened successfully (pid=%s)", db_id, worker.pid)
             await self._session_log(mcp_session, "info", f"Database {db_id} opened successfully")
@@ -2003,6 +2011,7 @@ class WorkerPoolProvider(Provider):
             if include_state:
                 entry["state"] = w.state.name.lower()
             entry.update(w.metadata)
+            entry["analyzed"] = w.analyzed
             entry["session_count"] = w.session_count
             if w.opening:
                 entry["opening"] = True
