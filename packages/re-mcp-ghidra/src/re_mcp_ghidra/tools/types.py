@@ -17,6 +17,7 @@ from re_mcp_ghidra.helpers import (
     FilterPattern,
     Limit,
     Offset,
+    check_range_in_memory,
     compile_filter,
     format_address,
     paginate_iter,
@@ -108,6 +109,8 @@ def register(mcp: FastMCP) -> None:
         addr = resolve_address(address)
 
         dt = _parse_data_type(type_string)
+        if dt.getLength() > 0:
+            check_range_in_memory(program, addr, dt.getLength())
 
         try:
             with transaction(program, "Set type"):
@@ -244,6 +247,9 @@ def register(mcp: FastMCP) -> None:
                 f"Type {type_name!r} not found. Use parse_type_declaration first.",
                 error_type="NotFound",
             )
+
+        if dt.getLength() > 0:
+            check_range_in_memory(program, addr, dt.getLength())
 
         try:
             with transaction(program, "Apply type at address"):

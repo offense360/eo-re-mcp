@@ -65,14 +65,16 @@ def register(mcp: FastMCP) -> None:
         try:
             with transaction(program, "Add entry point"):
                 sym_table = program.getSymbolTable()
-                sym_table.addExternalEntryPoint(addr)
 
-                # Create or update a label at the entry point
+                # Create or update the label first: it is the step that can
+                # fail (invalid/duplicate name), so nothing is left half-done.
                 existing_sym = sym_table.getPrimarySymbol(addr)
                 if existing_sym is not None:
                     existing_sym.setName(name, SourceType.USER_DEFINED)
                 else:
                     sym_table.createLabel(addr, name, SourceType.USER_DEFINED)
+
+                sym_table.addExternalEntryPoint(addr)
         except GhidraError:
             raise
         except Exception as e:

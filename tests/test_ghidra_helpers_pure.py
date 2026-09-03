@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 from re_mcp_ghidra.exceptions import GhidraError
-from re_mcp_ghidra.helpers import transaction
+from re_mcp_ghidra.helpers import check_range_in_memory, transaction, write_memory
 
 
 class FakeProgram:
@@ -87,3 +87,124 @@ class TestTransaction:
         ):
             pass
         assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
+# ---------------------------------------------------------------------------
+# check_range_in_memory / write_memory validation (#11 commit 3)
+# ---------------------------------------------------------------------------
+
+
+class FakeAddr:
+    def __init__(self, offset: int) -> None:
+        self.offset = offset
+
+    def add(self, n: int) -> FakeAddr:
+        return FakeAddr(self.offset + n)
+
+    def getOffset(self) -> int:
+        return self.offset
+
+    def __repr__(self) -> str:
+        return f"0x{self.offset:x}"
+
+
+class FakeBlock:
+    def __init__(
+        self, start: int, end: int, *, initialized: bool = True, name: str = "blk"
+    ) -> None:
+        self.start, self.end, self.initialized, self.name = start, end, initialized, name
+
+    def contains(self, addr: FakeAddr) -> bool:
+        return self.start <= addr.offset <= self.end
+
+    def getEnd(self) -> FakeAddr:
+        return FakeAddr(self.end)
+
+    def isInitialized(self) -> bool:
+        return self.initialized
+
+    def getName(self) -> str:
+        return self.name
+
+
+class FakeMemory:
+    def __init__(self, *blocks: FakeBlock) -> None:
+        self.blocks = blocks
+        self.writes: list[tuple] = []
+
+    def getBlock(self, addr: FakeAddr):
+        for b in self.blocks:
+            if b.contains(addr):
+                return b
+        return None
+
+    def setBytes(self, addr: FakeAddr, data: bytes) -> None:
+        self.writes.append((addr.offset, bytes(data)))
+
+
+class FakeListing:
+    def __init__(self) -> None:
+        self.cleared: list[tuple] = []
+
+    def clearCodeUnits(self, start: FakeAddr, end: FakeAddr, ctx: bool) -> None:
+        self.cleared.append((start.offset, end.offset))
+
+
+class FakeMemProgram(FakeProgram):
+    def __init__(self, *blocks: FakeBlock) -> None:
+        super().__init__()
+        self.memory = FakeMemory(*blocks)
+        self.listing = FakeListing()
+
+    def getMemory(self) -> FakeMemory:
+        return self.memory
+
+    def getListing(self) -> FakeListing:
+        return self.listing
+
+
+class TestCheckRangeInMemory:
+    def test_range_inside_one_block_passes(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF))
+        check_range_in_memory(program, FakeAddr(0x1FF0), 16)
+
+    def test_start_outside_memory_raises_not_found(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF))
+        with pytest.raises(GhidraError) as ei:
+            check_range_in_memory(program, FakeAddr(0x3000), 4)
+        assert ei.value.error_type == "NotFound"
+
+    def test_range_running_off_block_end_raises_not_found(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF))
+        with pytest.raises(GhidraError) as ei:
+            check_range_in_memory(program, FakeAddr(0x1FFE), 4)
+        assert ei.value.error_type == "NotFound"
+
+    def test_range_spanning_contiguous_blocks_passes(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF), FakeBlock(0x2000, 0x2FFF))
+        check_range_in_memory(program, FakeAddr(0x1FFE), 4)
+
+    def test_uninitialized_block_rejected_only_when_required(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF, initialized=False))
+        check_range_in_memory(program, FakeAddr(0x1000), 4)
+        with pytest.raises(GhidraError) as ei:
+            check_range_in_memory(program, FakeAddr(0x1000), 4, initialized=True)
+        assert ei.value.error_type == "InvalidArgument"
+
+
+class TestWriteMemoryValidatesBeforeMutating:
+    def test_invalid_range_raises_without_opening_a_transaction(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF))
+        with pytest.raises(GhidraError) as ei:
+            write_memory(program, FakeAddr(0x1FFE), b"\x90\x90\x90\x90")
+        assert ei.value.error_type == "NotFound"
+        assert program.calls == []
+        assert program.listing.cleared == []
+        assert program.memory.writes == []
+
+    def test_valid_range_clears_then_writes_inside_committed_transaction(self):
+        program = FakeMemProgram(FakeBlock(0x1000, 0x1FFF))
+        write_memory(program, FakeAddr(0x1FFC), b"\x90\x90\x90\x90", label="Patch bytes")
+        assert program.calls == [("start", "Patch bytes", 42), ("end", 42, True)]
+        assert program.listing.cleared == [(0x1FFC, 0x1FFF)]
+        assert program.memory.writes == [(0x1FFC, b"\x90\x90\x90\x90")]

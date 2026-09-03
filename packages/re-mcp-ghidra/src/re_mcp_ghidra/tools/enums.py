@@ -301,6 +301,12 @@ def register(mcp: FastMCP) -> None:
         if old_name is None:
             raise GhidraError(f"No member with value {value} in {enum_name}", error_type="NotFound")
 
+        if new_name != old_name and enum_dt.contains(new_name):
+            raise GhidraError(
+                f"Enum {enum_name} already has a member named {new_name!r}",
+                error_type="AlreadyExists",
+            )
+
         program = session.program
         try:
             with transaction(program, "Rename enum member"):

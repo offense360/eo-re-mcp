@@ -15,6 +15,7 @@ from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
     ANNO_MUTATE,
     Address,
+    check_range_in_memory,
     format_address,
     resolve_address,
     transaction,
@@ -120,6 +121,7 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         listing = program.getListing()
         addr = resolve_address(address)
+        check_range_in_memory(program, addr, elem_size * count)
 
         try:
             with transaction(program, "Make data"):
@@ -184,6 +186,7 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         listing = program.getListing()
         addr = resolve_address(address)
+        check_range_in_memory(program, addr, max(length, 1))
 
         try:
             with transaction(program, "Make string"):
@@ -256,6 +259,7 @@ def register(mcp: FastMCP) -> None:
         listing = program.getListing()
         addr = resolve_address(address)
         total_size = element_size * count
+        check_range_in_memory(program, addr, total_size)
 
         try:
             with transaction(program, "Make array"):

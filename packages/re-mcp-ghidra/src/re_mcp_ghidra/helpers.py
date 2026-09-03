@@ -50,6 +50,7 @@ __all__ = [
     "Offset",
     "async_paginate_iter",
     "call_ghidra",
+    "check_range_in_memory",
     "compile_filter",
     "format_address",
     "format_permissions",
@@ -214,16 +215,56 @@ def read_memory(memory, addr, size: int) -> bytes:
     return bytes(b & 0xFF for b in buf)
 
 
+def check_range_in_memory(program, addr, size: int, *, initialized: bool = False) -> None:
+    """Raise :class:`GhidraError` unless ``[addr, addr + size)`` is backed by memory blocks.
+
+    Mirrors the pre-flight walk ``MemoryMapDB.setBytes`` performs, so tools can
+    reject a bad range *before* they start mutating (clearing code units,
+    creating data, ...). With ``initialized=True`` every block in the range
+    must also be initialized, which is what a byte write requires.
+    """
+    if size <= 0:
+        raise GhidraError("size must be >= 1", error_type="InvalidArgument")
+    memory = program.getMemory()
+    try:
+        end_addr = addr.add(size - 1)
+    except Exception as e:
+        raise GhidraError(
+            f"Invalid range {format_address(addr.getOffset())} (+{size})",
+            error_type="InvalidArgument",
+        ) from e
+    cur = addr
+    while True:
+        block = memory.getBlock(cur)
+        if block is None:
+            raise GhidraError(
+                f"Address {format_address(cur.getOffset())} is not in memory "
+                f"(range {format_address(addr.getOffset())} +{size})",
+                error_type="NotFound",
+            )
+        if initialized and not block.isInitialized():
+            raise GhidraError(
+                f"Memory block {block.getName()} at {format_address(cur.getOffset())} "
+                "is uninitialized",
+                error_type="InvalidArgument",
+            )
+        if block.contains(end_addr):
+            return
+        cur = block.getEnd().add(1)
+
+
 def write_memory(program, addr, data: bytes, *, label: str = "Write bytes") -> None:
     """Write bytes to Ghidra memory within a transaction.
 
     Clears existing code units in the target range before writing to avoid
-    conflicts with existing instructions/data definitions.
+    conflicts with existing instructions/data definitions. The range is
+    validated first so a bad address fails before anything is cleared (#11).
 
     Raises :class:`GhidraError` on failure.
     """
     if not data:
         raise GhidraError("Cannot write empty data", error_type="InvalidArgument")
+    check_range_in_memory(program, addr, len(data), initialized=True)
     try:
         with transaction(program, label):
             end_addr = addr.add(len(data) - 1)

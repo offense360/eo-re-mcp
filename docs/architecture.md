@@ -235,6 +235,18 @@ Individual tools define additional error types specific to their domain (e.g. `P
 
 Mutation tools return the previous state of modified items (e.g. `old_comment`, `old_type`, `old_bytes`, `old_flags`) alongside the new values, enabling undo tracking and change verification by the LLM.
 
+### Ghidra transactions
+
+Every mutation in the Ghidra backend runs inside a Ghidra transaction, and every one of them is a *nested* transaction. `GhidraProject` (pyghidra's project wrapper used by `Session.open()`) starts a long-lived `"Batch Processing"` transaction for each program it imports or opens and keeps its id private; only `GhidraProject.save()`, `saveAs()` and `close()` end it (and `save`/`saveAs` immediately start a new one). Tool transactions opened with `program.startTransaction()` therefore become entries of that batch transaction.
+
+Ghidra's `DomainObjectDBTransaction.endEntry(id, commit=false)` marks the *whole* transaction `ABORTED`, and `DomainObjectTransactionManager.endTransaction()` rolls the database back when the outermost entry ends — regardless of the `commit` flag passed for the outermost entry. Under `GhidraProject` that means: one tool ending its transaction with `commit=False` silently discards **every change since the last save**, including changes made after the failed call, at the next `save_database` or `close_database(save=True)`. Both calls still report success. This was reproduced in issue #11.
+
+Rules that follow from this:
+
+- **Mutating tools must use `helpers.transaction(program, label)`** and never call `startTransaction`/`endTransaction` directly. The context manager always ends its entry with `commit=True`, even when the body raises, and logs a warning so the partial state is visible in the worker log.
+- **Validate before mutating.** Because a failing tool can no longer roll back its own partial change, everything that can fail (address/range checks, name validation, type lookups) must happen before the first mutating call. `helpers.check_range_in_memory()` exists for the common "does this range exist in memory" case; `write_memory` and the `make_*` / `set_type` tools use it before clearing code units.
+- Undo/redo cannot be offered through this path either (see #10): `program.undo()` needs the batch transaction to be closed.
+
 ### Address resolution
 
 Addresses are the most common parameter type. The `parse_address` function in backend helpers accepts multiple formats to minimize friction for LLM callers. Resolution order:
@@ -449,7 +461,7 @@ The process is the same for both backends. Using IDA as an example:
 8. Add any new third-party imports to the `known-third-party` list in `pyproject.toml` under `[tool.ruff.lint.isort]`
 9. Ideally add the tool to both backends with matching names and parameters for portability
 
-For the Ghidra backend, the same steps apply under `packages/re-mcp-ghidra/`.
+For the Ghidra backend, the same steps apply under `packages/re-mcp-ghidra/`. Ghidra mutating tools must wrap their changes in `helpers.transaction(program, label)` and validate every input before the first mutating call; never call `program.endTransaction()` directly (see [Ghidra transactions](#ghidra-transactions)).
 
 ## IDA 9 API Notes
 

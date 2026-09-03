@@ -155,11 +155,8 @@ def register(mcp: FastMCP) -> None:
                         error_type="InvalidArgument",
                     )
 
-                # Apply the parsed function definition to the function
-                ret_type = parsed_dt.getReturnType()
-                func.setReturnType(ret_type, SourceType.USER_DEFINED)
-
-                # Apply parameters
+                # Build the parameter list first: ParameterImpl validates names,
+                # so a bad declaration fails before the function is touched.
                 java_params = ArrayList()
                 for arg in parsed_dt.getArguments():
                     java_params.add(
@@ -170,12 +167,15 @@ def register(mcp: FastMCP) -> None:
                         )
                     )
 
+                # Apply parameters before the return type: replaceParameters is
+                # the step that can still fail, setReturnType effectively cannot.
                 func.replaceParameters(
                     java_params,
                     FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS,
                     True,
                     SourceType.USER_DEFINED,
                 )
+                func.setReturnType(parsed_dt.getReturnType(), SourceType.USER_DEFINED)
         except GhidraError:
             raise
         except Exception as e:
