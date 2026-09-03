@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import signal
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jsonschema
@@ -1814,6 +1815,100 @@ class TestAnalysisStateTracking:
             w._spawn_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await w._spawn_task
+
+    # -- explicit analyze_database goes through the shared analysis task --
+
+    _ANALYZE_DATA: ClassVar[dict] = {
+        "status": "analysis_complete",
+        "function_count": 198,
+        "segment_count": 9,
+    }
+
+    def _explicit_pool(self, *, fail: bool = False):
+        """Pool whose analyze_database proxy blocks on a gate until released."""
+        pool = _setup_pool([_make_mcp_tool("analyze_database"), _make_mcp_tool("list_functions")])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+        pool.attach_current_session = lambda w: None
+        gate = asyncio.Event()
+
+        async def proxy(w, tool, args):
+            if tool == "analyze_database":
+                await gate.wait()
+                if fail:
+                    return _error_call_result("boom")
+                return _ok_result(self._ANALYZE_DATA)
+            return _ok_result({"function_count": 198})
+
+        pool.proxy_to_worker = AsyncMock(side_effect=proxy)
+        return pool, worker, gate
+
+    @staticmethod
+    def _analyze_calls(pool) -> int:
+        return sum(1 for c in pool.proxy_to_worker.call_args_list if c[0][1] == "analyze_database")
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_registers_task(self):
+        pool, worker, gate = self._explicit_pool()
+        rt = pool._routing_tools["analyze_database"]
+
+        run = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        try:
+            assert worker.analyzing is True
+            with pytest.raises(ToolError, match="being analyzed"):
+                await pool._routing_tools["list_functions"].run({"database": "db1"})
+        finally:
+            gate.set()
+        result = await run
+
+        data = json.loads(result.content[0].text)
+        assert data.items() >= self._ANALYZE_DATA.items()
+        assert worker.analyzed is True
+        assert worker.metadata["function_count"] == 198
+
+    @pytest.mark.asyncio
+    async def test_concurrent_wait_joins_explicit_analysis(self):
+        pool, _worker, gate = self._explicit_pool()
+        rt = pool._routing_tools["analyze_database"]
+
+        run = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        waiter = asyncio.create_task(pool.wait_for_ready("db1"))
+        await self._spin()
+        gate.set()
+        await run
+        status = await waiter
+
+        assert status["status"] == "ready"
+        assert self._analyze_calls(pool) == 1
+
+    @pytest.mark.asyncio
+    async def test_second_explicit_analyze_joins(self):
+        pool, _worker, gate = self._explicit_pool()
+        rt = pool._routing_tools["analyze_database"]
+
+        first = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        second = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        gate.set()
+        r1, r2 = await asyncio.gather(first, second)
+
+        assert self._analyze_calls(pool) == 1
+        assert r1.content == r2.content
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_failure_raises_and_records(self):
+        pool, worker, gate = self._explicit_pool(fail=True)
+        gate.set()
+
+        with pytest.raises(ToolError, match="boom"):
+            await pool._routing_tools["analyze_database"].run({"database": "db1"})
+
+        assert worker.analysis_error is not None
+        assert "boom" in worker.analysis_error
+        assert worker.analyzed is False
 
 
 # ---------------------------------------------------------------------------
