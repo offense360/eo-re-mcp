@@ -1227,14 +1227,19 @@ class WorkerPoolProvider(Provider):
             )
         return worker
 
-    def _ensure_analysis_started(self, worker: Worker) -> None:
+    def _ensure_analysis_started(
+        self,
+        worker: Worker,
+        mcp_session: ServerSession | None = None,
+    ) -> None:
         """Kick off a one-time analysis pass if none has run for this worker.
 
         No-op when analysis has already completed, is in flight, previously
         failed, or the worker is not in an active state.  Safe to call without
         ``_lock``: the check-and-start is synchronous (no ``await`` between the
         guard and :meth:`Worker.start_analysis`), so concurrent callers on the
-        single event loop cannot both start a task.
+        single event loop cannot both start a task.  *mcp_session* receives the
+        analysis log and resource-list-changed notifications.
         """
         if (
             not worker.analyzed
@@ -1242,7 +1247,22 @@ class WorkerPoolProvider(Provider):
             and worker.analysis_error is None
             and worker.state not in _INACTIVE_STATES
         ):
-            worker.start_analysis(self._background_analysis(worker))
+            worker.start_analysis(self._background_analysis(worker, mcp_session))
+
+    async def _await_analysis(
+        self,
+        worker: Worker,
+        mcp_session: ServerSession | None = None,
+    ) -> None:
+        """Start analysis if it has never run, then wait for the running task.
+
+        Awaits the task directly (shielded, so a cancelled waiter does not
+        cancel the analysis) rather than making a redundant proxy call.
+        """
+        self._ensure_analysis_started(worker, mcp_session)
+        task = worker._analysis_task
+        if task is not None and not task.done():
+            await asyncio.shield(task)
 
     async def wait_for_ready(self, database: str | None) -> dict[str, Any]:
         """Wait for a database to finish opening and/or analysis.
@@ -1252,6 +1272,10 @@ class WorkerPoolProvider(Provider):
         """
         log.debug("wait_for_ready: database=%s", database)
         worker = self._lookup_worker(database)
+        # The request's session receives analysis notifications when the pass
+        # is started on demand here (#5).
+        ctx = try_get_context()
+        mcp_session = ctx.session if ctx else None
 
         # Wait for the background spawn to complete.
         if worker.opening:
@@ -1269,13 +1293,7 @@ class WorkerPoolProvider(Provider):
         # only entry points.  wait_for_analysis is documented as the call that
         # makes a database ready, so trigger a one-time analysis pass here when
         # none has run — otherwise this would return an unanalyzed database.
-        self._ensure_analysis_started(worker)
-
-        # If analysis is running, await the background task directly
-        # rather than making a redundant proxy call that would race with it.
-        task = worker._analysis_task
-        if task is not None and not task.done():
-            await asyncio.shield(task)
+        await self._await_analysis(worker, mcp_session)
 
         if worker.analysis_error:
             raise BackendError(
@@ -1333,6 +1351,9 @@ class WorkerPoolProvider(Provider):
             return {"databases": [], "ready": [], "pending": []}
 
         workers = [self._lookup_worker(db) for db in databases]
+        # Resolve the request session once here; _wait_one runs in child tasks.
+        ctx = try_get_context()
+        mcp_session = ctx.session if ctx else None
 
         async def _wait_one(w: Worker) -> None:
             """Wait for a single worker to finish spawning and analysis."""
@@ -1340,10 +1361,7 @@ class WorkerPoolProvider(Provider):
                 await w.wait_ready()
             if w.spawn_error:
                 return
-            self._ensure_analysis_started(w)
-            task = w._analysis_task
-            if task is not None and not task.done():
-                await asyncio.shield(task)
+            await self._await_analysis(w, mcp_session)
 
         tasks = {w.database_id: asyncio.create_task(_wait_one(w)) for w in workers}
         try:

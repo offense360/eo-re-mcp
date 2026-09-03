@@ -29,6 +29,7 @@ from fastmcp.tools.base import ToolResult
 from fastmcp.tools.tool import Tool as FastMCPTool
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import ValidationError as PydanticValidationError
+from re_mcp import worker_provider
 from re_mcp.exceptions import BackendError
 from re_mcp.supervisor import ProxyMCP
 from re_mcp.transforms import (
@@ -1495,18 +1496,6 @@ class TestWaitForReady:
         assert pool.proxy_to_worker.call_args_list[0][0][1] == "analyze_database"
 
     @pytest.mark.asyncio
-    async def test_analyzed_worker_not_reanalyzed(self):
-        """wait_for_ready does not re-run analysis once a worker is analyzed."""
-        pool = _setup_pool([])
-        worker = _add_worker(pool, "db1", {})
-        worker._ready_event.set()
-        worker.mark_analyzed()
-        pool.proxy_to_worker = AsyncMock()
-
-        await pool.wait_for_ready("db1")
-        pool.proxy_to_worker.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_prior_analysis_error_not_retried(self):
         """A worker whose analysis already failed is not silently retried."""
         pool = _setup_pool([])
@@ -1909,6 +1898,59 @@ class TestAnalysisStateTracking:
         assert worker.analysis_error is not None
         assert "boom" in worker.analysis_error
         assert worker.analyzed is False
+
+    # -- on-demand analysis uses the request's MCP session for notifications --
+
+    def _on_demand_pool(self, monkeypatch, ctx) -> tuple[WorkerPoolProvider, Worker]:
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+        pool.proxy_to_worker = AsyncMock(
+            side_effect=[_ok_result(self._ANALYZE_DATA), _ok_result({"function_count": 198})]
+        )
+        pool._session_log = AsyncMock()
+        pool._session_notify = AsyncMock()
+        monkeypatch.setattr(worker_provider, "try_get_context", lambda: ctx)
+        return pool, worker
+
+    @pytest.mark.asyncio
+    async def test_on_demand_analysis_uses_request_session(self, monkeypatch):
+        sentinel = object()
+        pool, worker = self._on_demand_pool(monkeypatch, MagicMock(session=sentinel))
+
+        result = await pool.wait_for_ready("db1")
+
+        assert result["status"] == "ready"
+        assert worker.analyzed is True
+        assert pool._session_log.await_count >= 2
+        assert all(c.args[0] is sentinel for c in pool._session_log.await_args_list)
+        assert pool._session_notify.await_count == 1
+        assert pool._session_notify.await_args.args[0] is sentinel
+
+    @pytest.mark.asyncio
+    async def test_on_demand_analysis_without_context_is_noop_safe(self, monkeypatch):
+        pool, worker = self._on_demand_pool(monkeypatch, None)
+
+        result = await pool.wait_for_ready("db1")
+
+        assert result["status"] == "ready"
+        assert worker.analyzed is True
+        assert all(c.args[0] is None for c in pool._session_log.await_args_list)
+        assert pool._session_notify.await_args.args[0] is None
+
+    @pytest.mark.asyncio
+    async def test_on_demand_multi_uses_request_session(self, monkeypatch):
+        """The wait_for_ready_multi/_wait_one path passes the session too."""
+        sentinel = object()
+        pool, worker = self._on_demand_pool(monkeypatch, MagicMock(session=sentinel))
+
+        result = await pool.wait_for_ready_multi(["db1"])
+
+        assert result["ready"] == ["db1"]
+        assert worker.analyzed is True
+        assert pool._session_log.await_count >= 2
+        assert all(c.args[0] is sentinel for c in pool._session_log.await_args_list)
+        assert pool._session_notify.await_args.args[0] is sentinel
 
 
 # ---------------------------------------------------------------------------
