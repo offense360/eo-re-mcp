@@ -126,7 +126,9 @@ class ProxyMCP(FastMCP):
             Specify *database* when multiple are open. Fails if the DB is
             not attached to the current session unless force=True. When other
             sessions still use the DB, detaches this session but keeps the
-            worker alive.
+            worker alive. If the worker's save or close fails, the result is
+            still status "closed" but carries close_error with the worker's
+            error text (unsaved changes may be lost).
             """
             worker = pool.resolve_worker(database)
             result = await pool.close_for_session(
