@@ -750,6 +750,49 @@ def _error_call_result(msg: str) -> types.CallToolResult:
     )
 
 
+class TestRoutingToolExplicitAnalyze:
+    """An explicit ``analyze_database`` call must leave the worker in the same
+    state as a completed background analysis: fresh metadata, no stale error."""
+
+    def _pool_with_analyze(self, initial_metadata: dict) -> tuple[WorkerPoolProvider, Worker]:
+        pool = _setup_pool([_make_mcp_tool("analyze_database")])
+        worker = _add_worker(pool, "db1", {})
+        worker.metadata.update(initial_metadata)
+        pool.attach_current_session = lambda w: None
+        pool.proxy_to_worker = AsyncMock(
+            return_value=_ok_result(
+                {"status": "analysis_complete", "function_count": 198, "segment_count": 9}
+            )
+        )
+        return pool, worker
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_refreshes_worker_metadata(self):
+        """function_count/segment_count from the analyze result replace stale values."""
+        pool, worker = self._pool_with_analyze({"function_count": 12, "segment_count": 8})
+
+        await pool._routing_tools["analyze_database"].run({"database": "db1"})
+
+        assert worker.analyzed is True
+        assert worker.metadata["function_count"] == 198
+        assert worker.metadata["segment_count"] == 9
+        assert pool._worker_status(worker)["function_count"] == 198
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_clears_prior_analysis_error(self):
+        """A successful explicit analysis recovers a worker whose background pass failed."""
+        pool, worker = self._pool_with_analyze({})
+        worker.record_analysis_error("boom")
+
+        await pool._routing_tools["analyze_database"].run({"database": "db1"})
+
+        assert worker.analysis_error is None
+        result = await pool.wait_for_ready("db1")
+        assert result["status"] == "ready"
+        # wait_for_ready must not have re-run analysis.
+        assert pool.proxy_to_worker.await_count == 1
+
+
 class TestBackgroundAnalysis:
     """Test WorkerPoolProvider._background_analysis coroutine."""
 

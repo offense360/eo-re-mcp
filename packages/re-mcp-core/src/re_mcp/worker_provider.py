@@ -351,8 +351,14 @@ class Worker:
         return self._analyzed
 
     def mark_analyzed(self) -> None:
-        """Record that auto-analysis has completed for this worker."""
+        """Record that auto-analysis has completed for this worker.
+
+        Also clears any error left by an earlier failed pass: a completed
+        analysis supersedes it, otherwise ``wait_for_analysis`` would keep
+        raising ``AnalysisFailed`` for a database that is in fact analyzed.
+        """
         self._analyzed = True
+        self._analysis_error = None
 
     @property
     def opening(self) -> bool:
@@ -485,9 +491,16 @@ class RoutingTool(Tool):
             raise ToolError(_extract_error_text(enriched))
 
         # An explicit analyze_database call fully analyzes the database; record
-        # it so a subsequent wait_for_analysis does not redundantly re-run.
+        # it so a subsequent wait_for_analysis does not redundantly re-run, and
+        # refresh the cached metadata (function_count etc.) from the result the
+        # same way _background_analysis does — nothing else will refresh it once
+        # the worker is marked analyzed.
         if self.name == ANALYZE_TOOL:
             worker.mark_analyzed()
+            analyze_data = parse_result(enriched)
+            for k in _WORKER_META_KEYS:
+                if k in analyze_data:
+                    worker.metadata[k] = analyze_data[k]
 
         return ToolResult(
             content=enriched.content,
