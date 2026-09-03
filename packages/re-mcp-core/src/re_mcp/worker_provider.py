@@ -94,6 +94,11 @@ _WORKER_META_KEYS = (
     "capabilities",
 )
 
+# Subset of _WORKER_META_KEYS that an analysis pass changes.  When the
+# analyze_database result already carries them, get_database_info is not
+# re-queried after analysis.
+_ANALYSIS_VOLATILE_KEYS = ("function_count", "segment_count")
+
 # Name of the backend worker tool that runs auto-analysis to completion.
 # Each backend registers a client-visible ``analyze_database`` tool; the
 # supervisor also proxies it for background/on-demand analysis.
@@ -278,6 +283,7 @@ class Worker:
     _analysis_task: asyncio.Task[None] | None = None
     _analysis_error: str | None = None
     _analyzed: bool = False
+    _last_analysis_result: types.CallToolResult | None = None
     _ready_event: asyncio.Event = field(default_factory=asyncio.Event)
     _spawn_task: asyncio.Task[None] | None = None
     _spawn_error: str | None = None
@@ -362,8 +368,17 @@ class Worker:
 
     @property
     def opening(self) -> bool:
-        """True if the worker is still being spawned/opened in the background."""
-        return self._state == WorkerState.STARTING and not self._ready_event.is_set()
+        """True until the background open has signalled ``_ready_event``.
+
+        Derived from the event rather than from ``state``: ``_background_spawn``
+        sets ``state = IDLE`` and then awaits a client log before setting the
+        event, and a waiter that judged by ``state`` in that window would start
+        an analysis task the spawn then replaced (#5).  A worker that has not
+        been spawned at all (``STARTING`` with no spawn task) is still opening.
+        """
+        if self._ready_event.is_set():
+            return False
+        return self._spawn_task is not None or self._state == WorkerState.STARTING
 
     @property
     def spawn_error(self) -> str | None:
@@ -374,12 +389,26 @@ class Worker:
         """Block until the worker has finished opening (or failed)."""
         await self._ready_event.wait()
 
-    def start_analysis(self, coro: Coroutine[Any, Any, None]) -> None:
-        """Start a background analysis coroutine as an ``asyncio.Task``."""
+    def start_analysis(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Start *coro* as the worker's analysis task and return that task.
+
+        If an analysis task is already running it is kept and returned
+        unchanged (*coro* is closed unawaited): every start path shares one
+        task so concurrent callers join it instead of running a second pass.
+        """
+        task = self._analysis_task
+        if task is not None and not task.done():
+            log.debug(
+                "start_analysis: analysis already running for %s, keeping existing task",
+                self.database_id,
+            )
+            coro.close()
+            return task
         self._analysis_error = None
         self._analysis_task = asyncio.create_task(
             coro, name=f"background-analysis-{self.database_id}"
         )
+        return self._analysis_task
 
     def record_analysis_error(self, message: str) -> None:
         """Record a background analysis error message."""
@@ -467,6 +496,20 @@ class RoutingTool(Tool):
         database = arguments.pop("database", None)
         worker = self._provider.resolve_worker(database)
 
+        # An explicit analyze_database call is the worker's analysis task: it
+        # starts one if none is running, otherwise it joins the running one
+        # (#5).  That keeps ``analyzing``/``analyzed`` and the fast-fail guard
+        # below consistent for every start path.
+        if self.name == ANALYZE_TOOL:
+            self._provider.attach_current_session(worker)
+            ctx = try_get_context()
+            result = await self._provider.run_analysis(worker, ctx.session if ctx else None)
+            enriched = _enrich_result(result, worker.database_id)
+            return ToolResult(
+                content=enriched.content,
+                structured_content=enriched.structuredContent,
+            )
+
         # During background analysis the worker thread is occupied, so block
         # all worker tools.  Clients await completion via the supervisor-level
         # wait_for_analysis (a management tool, not routed through here).
@@ -489,18 +532,6 @@ class RoutingTool(Tool):
 
         if enriched.isError:
             raise ToolError(_extract_error_text(enriched))
-
-        # An explicit analyze_database call fully analyzes the database; record
-        # it so a subsequent wait_for_analysis does not redundantly re-run, and
-        # refresh the cached metadata (function_count etc.) from the result the
-        # same way _background_analysis does — nothing else will refresh it once
-        # the worker is marked analyzed.
-        if self.name == ANALYZE_TOOL:
-            worker.mark_analyzed()
-            analyze_data = parse_result(enriched)
-            for k in _WORKER_META_KEYS:
-                if k in analyze_data:
-                    worker.metadata[k] = analyze_data[k]
 
         return ToolResult(
             content=enriched.content,
@@ -1196,14 +1227,19 @@ class WorkerPoolProvider(Provider):
             )
         return worker
 
-    def _ensure_analysis_started(self, worker: Worker) -> None:
+    def _ensure_analysis_started(
+        self,
+        worker: Worker,
+        mcp_session: ServerSession | None = None,
+    ) -> None:
         """Kick off a one-time analysis pass if none has run for this worker.
 
         No-op when analysis has already completed, is in flight, previously
         failed, or the worker is not in an active state.  Safe to call without
         ``_lock``: the check-and-start is synchronous (no ``await`` between the
         guard and :meth:`Worker.start_analysis`), so concurrent callers on the
-        single event loop cannot both start a task.
+        single event loop cannot both start a task.  *mcp_session* receives the
+        analysis log and resource-list-changed notifications.
         """
         if (
             not worker.analyzed
@@ -1211,7 +1247,22 @@ class WorkerPoolProvider(Provider):
             and worker.analysis_error is None
             and worker.state not in _INACTIVE_STATES
         ):
-            worker.start_analysis(self._background_analysis(worker))
+            worker.start_analysis(self._background_analysis(worker, mcp_session))
+
+    async def _await_analysis(
+        self,
+        worker: Worker,
+        mcp_session: ServerSession | None = None,
+    ) -> None:
+        """Start analysis if it has never run, then wait for the running task.
+
+        Awaits the task directly (shielded, so a cancelled waiter does not
+        cancel the analysis) rather than making a redundant proxy call.
+        """
+        self._ensure_analysis_started(worker, mcp_session)
+        task = worker._analysis_task
+        if task is not None and not task.done():
+            await asyncio.shield(task)
 
     async def wait_for_ready(self, database: str | None) -> dict[str, Any]:
         """Wait for a database to finish opening and/or analysis.
@@ -1221,6 +1272,10 @@ class WorkerPoolProvider(Provider):
         """
         log.debug("wait_for_ready: database=%s", database)
         worker = self._lookup_worker(database)
+        # The request's session receives analysis notifications when the pass
+        # is started on demand here (#5).
+        ctx = try_get_context()
+        mcp_session = ctx.session if ctx else None
 
         # Wait for the background spawn to complete.
         if worker.opening:
@@ -1238,13 +1293,7 @@ class WorkerPoolProvider(Provider):
         # only entry points.  wait_for_analysis is documented as the call that
         # makes a database ready, so trigger a one-time analysis pass here when
         # none has run — otherwise this would return an unanalyzed database.
-        self._ensure_analysis_started(worker)
-
-        # If analysis is running, await the background task directly
-        # rather than making a redundant proxy call that would race with it.
-        task = worker._analysis_task
-        if task is not None and not task.done():
-            await asyncio.shield(task)
+        await self._await_analysis(worker, mcp_session)
 
         if worker.analysis_error:
             raise BackendError(
@@ -1302,6 +1351,9 @@ class WorkerPoolProvider(Provider):
             return {"databases": [], "ready": [], "pending": []}
 
         workers = [self._lookup_worker(db) for db in databases]
+        # Resolve the request session once here; _wait_one runs in child tasks.
+        ctx = try_get_context()
+        mcp_session = ctx.session if ctx else None
 
         async def _wait_one(w: Worker) -> None:
             """Wait for a single worker to finish spawning and analysis."""
@@ -1309,10 +1361,7 @@ class WorkerPoolProvider(Provider):
                 await w.wait_ready()
             if w.spawn_error:
                 return
-            self._ensure_analysis_started(w)
-            task = w._analysis_task
-            if task is not None and not task.done():
-                await asyncio.shield(task)
+            await self._await_analysis(w, mcp_session)
 
         tasks = {w.database_id: asyncio.create_task(_wait_one(w)) for w in workers}
         try:
@@ -1659,6 +1708,36 @@ class WorkerPoolProvider(Provider):
         except Exception:
             log.debug("Failed to send notification", exc_info=True)
 
+    async def run_analysis(
+        self,
+        worker: Worker,
+        mcp_session: ServerSession | None = None,
+    ) -> types.CallToolResult:
+        """Run (or join) the worker's analysis task and return its result.
+
+        Used by the explicit ``analyze_database`` tool.  If an analysis task is
+        already running the caller joins it and receives the same result;
+        otherwise a new task is started through :meth:`_background_analysis`,
+        so metadata refresh, ``mark_analyzed`` and client notifications happen
+        in exactly one place.  Raises ``ToolError`` when the pass failed.
+        """
+        task = worker._analysis_task
+        if task is not None and not task.done():
+            log.debug("run_analysis: joining running analysis for %s", worker.database_id)
+        else:
+            task = worker.start_analysis(self._background_analysis(worker, mcp_session))
+        await asyncio.shield(task)
+
+        if worker.analysis_error:
+            raise ToolError(worker.analysis_error)
+        result = worker._last_analysis_result
+        if result is None:
+            raise ToolError(
+                f"Analysis of '{worker.database_id}' finished without a result "
+                "(worker closed or task cancelled)."
+            )
+        return result
+
     async def _background_analysis(
         self,
         worker: Worker,
@@ -1679,6 +1758,7 @@ class WorkerPoolProvider(Provider):
                 ANALYZE_TOOL,
                 {},
             )
+            worker._last_analysis_result = result
 
             if result.isError:
                 err_text = _extract_error_text(result, "unknown error")
@@ -1691,13 +1771,21 @@ class WorkerPoolProvider(Provider):
 
             worker.mark_analyzed()
 
-            # Refresh metadata (function_count etc. change after analysis).
-            info_result = await self.proxy_to_worker(worker, "get_database_info", {})
-            if not info_result.isError:
-                info_data = parse_result(info_result)
-                for k in _WORKER_META_KEYS:
-                    if k in info_data:
-                        worker.metadata[k] = info_data[k]
+            # Refresh metadata (function_count etc. change after analysis)
+            # from the analyze result itself; fall back to get_database_info
+            # when the result does not carry the counts that analysis changes.
+            analyze_data = parse_result(result)
+            for k in _WORKER_META_KEYS:
+                if k in analyze_data:
+                    worker.metadata[k] = analyze_data[k]
+
+            if not all(k in analyze_data for k in _ANALYSIS_VOLATILE_KEYS):
+                info_result = await self.proxy_to_worker(worker, "get_database_info", {})
+                if not info_result.isError:
+                    info_data = parse_result(info_result)
+                    for k in _WORKER_META_KEYS:
+                        if k in info_data:
+                            worker.metadata[k] = info_data[k]
 
             func_count = worker.metadata.get("function_count", "?")
             log.info("Background analysis complete for %s: %s functions", db_id, func_count)

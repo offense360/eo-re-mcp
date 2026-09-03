@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import signal
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jsonschema
@@ -28,6 +29,7 @@ from fastmcp.tools.base import ToolResult
 from fastmcp.tools.tool import Tool as FastMCPTool
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import ValidationError as PydanticValidationError
+from re_mcp import worker_provider
 from re_mcp.exceptions import BackendError
 from re_mcp.supervisor import ProxyMCP
 from re_mcp.transforms import (
@@ -1494,18 +1496,6 @@ class TestWaitForReady:
         assert pool.proxy_to_worker.call_args_list[0][0][1] == "analyze_database"
 
     @pytest.mark.asyncio
-    async def test_analyzed_worker_not_reanalyzed(self):
-        """wait_for_ready does not re-run analysis once a worker is analyzed."""
-        pool = _setup_pool([])
-        worker = _add_worker(pool, "db1", {})
-        worker._ready_event.set()
-        worker.mark_analyzed()
-        pool.proxy_to_worker = AsyncMock()
-
-        await pool.wait_for_ready("db1")
-        pool.proxy_to_worker.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_prior_analysis_error_not_retried(self):
         """A worker whose analysis already failed is not silently retried."""
         pool = _setup_pool([])
@@ -1680,6 +1670,287 @@ class TestSpawnSeedsAnalyzedFlag:
         assert pool.build_database_list()["databases"][0].get("analyzed") is False
         worker.mark_analyzed()
         assert pool.build_database_list()["databases"][0].get("analyzed") is True
+
+
+# ---------------------------------------------------------------------------
+# Analysis state tracking: one task whoever starts it (#5)
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisStateTracking:
+    """ "Analysis in progress" is one ``Worker._analysis_task`` regardless of
+    which path started it: the spawn chain, ``wait_for_analysis`` or an
+    explicit ``analyze_database`` call (#5)."""
+
+    @staticmethod
+    def _fake_client(open_result: types.CallToolResult) -> type:
+        class _FakeClient:
+            def __init__(self, transport):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def call_tool_mcp(self, name, args):
+                return open_result
+
+        return _FakeClient
+
+    @staticmethod
+    async def _spin(n: int = 5) -> None:
+        for _ in range(n):
+            await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_spawn_window_does_not_double_start(self):
+        """A wait_for_ready that lands between ``state = IDLE`` and
+        ``_ready_event.set()`` must not produce a second analysis task."""
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.state = WorkerState.STARTING
+        calls: list[str] = []
+        gate_log = asyncio.Event()
+        analyze_gate = asyncio.Event()
+
+        async def fake_session_log(session, level, msg):
+            # A real send_log_message yields to the loop; park here to hold
+            # the window open deterministically.
+            if "opened successfully" in msg:
+                await gate_log.wait()
+
+        async def fake_proxy(w, tool, args):
+            calls.append(tool)
+            if tool == "analyze_database":
+                await analyze_gate.wait()
+                return _ok_result({"status": "analysis_complete", "function_count": 99})
+            return _ok_result({"function_count": 99})
+
+        pool._worker_transport = lambda label="bootstrap": None
+        pool._spawn_death_watcher = lambda w: None
+        pool._session_log = fake_session_log
+        pool.proxy_to_worker = fake_proxy
+        open_result = _ok_result({"status": "ok", "pid": 1, "function_count": 3})
+
+        async def _spawn():
+            with patch("re_mcp.worker_provider.Client", self._fake_client(open_result)):
+                await pool._background_spawn(
+                    worker,
+                    "/tmp/db1",
+                    "/tmp/db1",
+                    "db1",
+                    run_auto_analysis=True,
+                    force_new=False,
+                    stale_worker=None,
+                    mcp_session=MagicMock(),
+                )
+
+        worker._spawn_task = asyncio.create_task(_spawn())
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if worker.state == WorkerState.IDLE:
+                break
+        assert worker.state == WorkerState.IDLE
+        assert not worker._ready_event.is_set()
+
+        waiter = asyncio.create_task(pool.wait_for_ready("db1"))
+        await self._spin()
+        task_in_window = worker._analysis_task
+
+        gate_log.set()
+        await self._spin()
+        task_after_spawn = worker._analysis_task
+        assert task_after_spawn is not None
+        assert task_in_window is None or task_in_window is task_after_spawn
+
+        analyze_gate.set()
+        await worker._spawn_task
+        result = await waiter
+
+        assert result["status"] == "ready"
+        assert calls.count("analyze_database") == 1
+        assert worker._analysis_task is task_after_spawn
+
+    @pytest.mark.asyncio
+    async def test_start_analysis_keeps_running_task(self):
+        w = Worker(database_id="db", file_path="/tmp/db")
+        first = w.start_analysis(asyncio.sleep(3600))
+        second = w.start_analysis(asyncio.sleep(3600))
+        try:
+            assert w._analysis_task is first
+            assert second is first
+            assert not first.cancelled()
+        finally:
+            for t in (first, second, w._analysis_task):
+                if isinstance(t, asyncio.Task) and not t.done():
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await t
+            await w.cancel_analysis()
+
+    @pytest.mark.asyncio
+    async def test_opening_follows_ready_event(self):
+        """With a spawn in flight, ``opening`` tracks the ready event, not ``state``."""
+        w = Worker(database_id="db", file_path="/tmp/db")
+        w._spawn_task = asyncio.create_task(asyncio.sleep(3600))
+        try:
+            w.state = WorkerState.IDLE
+            assert w.opening is True
+            w._ready_event.set()
+            assert w.opening is False
+        finally:
+            w._spawn_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await w._spawn_task
+
+    # -- explicit analyze_database goes through the shared analysis task --
+
+    _ANALYZE_DATA: ClassVar[dict] = {
+        "status": "analysis_complete",
+        "function_count": 198,
+        "segment_count": 9,
+    }
+
+    def _explicit_pool(self, *, fail: bool = False):
+        """Pool whose analyze_database proxy blocks on a gate until released."""
+        pool = _setup_pool([_make_mcp_tool("analyze_database"), _make_mcp_tool("list_functions")])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+        pool.attach_current_session = lambda w: None
+        gate = asyncio.Event()
+
+        async def proxy(w, tool, args):
+            if tool == "analyze_database":
+                await gate.wait()
+                if fail:
+                    return _error_call_result("boom")
+                return _ok_result(self._ANALYZE_DATA)
+            return _ok_result({"function_count": 198})
+
+        pool.proxy_to_worker = AsyncMock(side_effect=proxy)
+        return pool, worker, gate
+
+    @staticmethod
+    def _analyze_calls(pool) -> int:
+        return sum(1 for c in pool.proxy_to_worker.call_args_list if c[0][1] == "analyze_database")
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_registers_task(self):
+        pool, worker, gate = self._explicit_pool()
+        rt = pool._routing_tools["analyze_database"]
+
+        run = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        try:
+            assert worker.analyzing is True
+            with pytest.raises(ToolError, match="being analyzed"):
+                await pool._routing_tools["list_functions"].run({"database": "db1"})
+        finally:
+            gate.set()
+        result = await run
+
+        data = json.loads(result.content[0].text)
+        assert data.items() >= self._ANALYZE_DATA.items()
+        assert worker.analyzed is True
+        assert worker.metadata["function_count"] == 198
+
+    @pytest.mark.asyncio
+    async def test_concurrent_wait_joins_explicit_analysis(self):
+        pool, _worker, gate = self._explicit_pool()
+        rt = pool._routing_tools["analyze_database"]
+
+        run = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        waiter = asyncio.create_task(pool.wait_for_ready("db1"))
+        await self._spin()
+        gate.set()
+        await run
+        status = await waiter
+
+        assert status["status"] == "ready"
+        assert self._analyze_calls(pool) == 1
+
+    @pytest.mark.asyncio
+    async def test_second_explicit_analyze_joins(self):
+        pool, _worker, gate = self._explicit_pool()
+        rt = pool._routing_tools["analyze_database"]
+
+        first = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        second = asyncio.create_task(rt.run({"database": "db1"}))
+        await self._spin()
+        gate.set()
+        r1, r2 = await asyncio.gather(first, second)
+
+        assert self._analyze_calls(pool) == 1
+        assert r1.content == r2.content
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_failure_raises_and_records(self):
+        pool, worker, gate = self._explicit_pool(fail=True)
+        gate.set()
+
+        with pytest.raises(ToolError, match="boom"):
+            await pool._routing_tools["analyze_database"].run({"database": "db1"})
+
+        assert worker.analysis_error is not None
+        assert "boom" in worker.analysis_error
+        assert worker.analyzed is False
+
+    # -- on-demand analysis uses the request's MCP session for notifications --
+
+    def _on_demand_pool(self, monkeypatch, ctx) -> tuple[WorkerPoolProvider, Worker]:
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+        pool.proxy_to_worker = AsyncMock(
+            side_effect=[_ok_result(self._ANALYZE_DATA), _ok_result({"function_count": 198})]
+        )
+        pool._session_log = AsyncMock()
+        pool._session_notify = AsyncMock()
+        monkeypatch.setattr(worker_provider, "try_get_context", lambda: ctx)
+        return pool, worker
+
+    @pytest.mark.asyncio
+    async def test_on_demand_analysis_uses_request_session(self, monkeypatch):
+        sentinel = object()
+        pool, worker = self._on_demand_pool(monkeypatch, MagicMock(session=sentinel))
+
+        result = await pool.wait_for_ready("db1")
+
+        assert result["status"] == "ready"
+        assert worker.analyzed is True
+        assert pool._session_log.await_count >= 2
+        assert all(c.args[0] is sentinel for c in pool._session_log.await_args_list)
+        assert pool._session_notify.await_count == 1
+        assert pool._session_notify.await_args.args[0] is sentinel
+
+    @pytest.mark.asyncio
+    async def test_on_demand_analysis_without_context_is_noop_safe(self, monkeypatch):
+        pool, worker = self._on_demand_pool(monkeypatch, None)
+
+        result = await pool.wait_for_ready("db1")
+
+        assert result["status"] == "ready"
+        assert worker.analyzed is True
+        assert all(c.args[0] is None for c in pool._session_log.await_args_list)
+        assert pool._session_notify.await_args.args[0] is None
+
+    @pytest.mark.asyncio
+    async def test_on_demand_multi_uses_request_session(self, monkeypatch):
+        """The wait_for_ready_multi/_wait_one path passes the session too."""
+        sentinel = object()
+        pool, worker = self._on_demand_pool(monkeypatch, MagicMock(session=sentinel))
+
+        result = await pool.wait_for_ready_multi(["db1"])
+
+        assert result["ready"] == ["db1"]
+        assert worker.analyzed is True
+        assert pool._session_log.await_count >= 2
+        assert all(c.args[0] is sentinel for c in pool._session_log.await_args_list)
+        assert pool._session_notify.await_args.args[0] is sentinel
 
 
 # ---------------------------------------------------------------------------

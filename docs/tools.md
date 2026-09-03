@@ -395,7 +395,7 @@ Auto-analysis control, problems, fixups, exception handlers, and segment registe
 
 | Tool | Description |
 |------|-------------|
-| `analyze_database` | Run auto-analysis to completion on an open database and return post-analysis statistics. `wait_for_analysis` calls this automatically the first time; call it directly to re-analyze after patches or type changes. Blocks other tools on the database while running. |
+| `analyze_database` | Run auto-analysis to completion on an open database and return post-analysis statistics. `wait_for_analysis` calls this automatically the first time; call it directly to re-analyze after patches or type changes. Blocks other tools on the database while running. If analysis is already running, waits for it and returns the same result instead of starting a second pass. |
 | `reanalyze_range` | Trigger auto-analysis on an address range. |
 | `get_analysis_problems` | List analysis problems and conflicts. Paginated. |
 | `get_fixups` | List relocation/fixup records in an address range. Paginated (IDA). |
