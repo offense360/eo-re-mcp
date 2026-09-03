@@ -58,7 +58,7 @@ def _iter_tool_docstrings() -> list[tuple[str, str, str]]:
     for path in sorted(TOOLS_DIR.glob("*.py")):
         if path.name.startswith("_"):
             continue
-        tree = ast.parse(path.read_text(), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
