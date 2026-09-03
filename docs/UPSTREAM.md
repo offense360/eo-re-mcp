@@ -36,13 +36,36 @@ where applicable. IDA Pro was not available, so IDA-only changes were checked
 against the public IDA SDK headers, IDAPython SWIG sources and Hex-Rays
 documentation. Details are in the tracking issues linked above.
 
-## Defects found on upstream `main` (not from any PR)
+## Fork issue log
 
-| Issue | Summary |
-|---|---|
-| [#1](https://github.com/offense360/eo-re-mcp/issues/1) | Ghidra: `close_database` after `save_database` fails inside the worker (`Unable to lock due to active transaction`) but the supervisor reports `closed` |
-| [#2](https://github.com/offense360/eo-re-mcp/issues/2) | `tests/test_tool_brief_budget.py` reads source with the locale codec; fails on non-UTF-8 Windows |
-| [#3](https://github.com/offense360/eo-re-mcp/issues/3) | Documented `<PREFIX>LOG_DIR` is ignored; only `RE_MCP_LOG_DIR` / `IDA_MCP_LOG_DIR` are read |
+Issues are the unit of work in this fork. Each fix lands as a `--no-ff` merge of
+a branch whose commits were written test-first and, where a backend is
+available, verified at runtime; the issue's closing comment holds the runtime
+evidence. Status as of 2026-09-04.
+
+| Issue | Area | Summary | Status |
+|---|---|---|---|
+| [#1](https://github.com/offense360/eo-re-mcp/issues/1) | Ghidra | Second save inside `close_database` failed with `Unable to lock due to active transaction`. Root cause: `GhidraProject` holds a permanent batch transaction that only `GhidraProject.save` ends; `session.save()` bypassed it. Also split `close_error` into message + `close_error_type`. | Fixed (d89a96d) |
+| [#2](https://github.com/offense360/eo-re-mcp/issues/2) | tests | `test_tool_brief_budget` read source with the locale codec | Fixed (ce11725) |
+| [#3](https://github.com/offense360/eo-re-mcp/issues/3) | core | `GHIDRA_MCP_*` logging variables ignored (`LOG_DIR` everywhere; `LOG_RUN`, `LABEL`, `LOG_LEVEL` in workers); process-wide env prefix added | Fixed (cca50e3) |
+| [#4](https://github.com/offense360/eo-re-mcp/issues/4) | upstream | Adopt upstream PR #46 with fixes for explicit-call metadata and error latch | Done (6a4ce8c) |
+| [#5](https://github.com/offense360/eo-re-mcp/issues/5) | core | Analysis state tracked as one task for all start paths: no double analysis, spawn window closed, on-demand notifications | Fixed (e3471d5) |
+| [#6](https://github.com/offense360/eo-re-mcp/issues/6) | upstream | Track upstream PR #48; not adopted pending `set_call_type` / `set_stack_delta` fixes and IDA verification | Open, needs IDA |
+| [#7](https://github.com/offense360/eo-re-mcp/issues/7) | core | Supervisor reported `closed` even when the worker's close/save failed; response now carries `close_error` | Fixed (4e60011) |
+| [#8](https://github.com/offense360/eo-re-mcp/issues/8) | all | Already-analyzed databases were re-analyzed on first `wait_for_analysis`; backends now report `analyzed`, core seeds the flag. Also replaced the nonexistent `setAnalyzedFlag` call. | Fixed (3c3d755); IDA path unverified, see #12 |
+| [#9](https://github.com/offense360/eo-re-mcp/issues/9) | Ghidra | Reopening a project whose program was never saved raised `FileNotFoundException`; now re-imports | Fixed (fbfcf51) |
+| [#10](https://github.com/offense360/eo-re-mcp/issues/10) | Ghidra | `undo` / `redo` can never succeed under `GhidraProject`'s batch transaction | Open |
+| [#11](https://github.com/offense360/eo-re-mcp/issues/11) | Ghidra | An aborted nested tool transaction may roll back everything since the last save (inferred, unreproduced) | Open |
+| [#12](https://github.com/offense360/eo-re-mcp/issues/12) | IDA | Verify #8's `analyzed` signal (`sidecar_exists and auto_is_ok()`) on a machine with IDA | Open, needs IDA |
+
+### Known constraints of this environment
+
+- Only the Ghidra backend (12.1.2) can be exercised at runtime here; IDA-only
+  changes are reviewed statically against the IDA SDK headers and IDAPython
+  sources. Issues #6 and #12 wait on an IDA installation.
+- The Windows test baseline has 15 platform-specific failures (POSIX signals,
+  symlinks, `chmod`, macOS/Linux state directories). Any other failure is a
+  regression.
 
 ## Syncing with upstream
 
