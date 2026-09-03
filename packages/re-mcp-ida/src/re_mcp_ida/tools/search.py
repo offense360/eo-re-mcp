@@ -361,7 +361,7 @@ def register(mcp: FastMCP):
         find_code_by_string to do both steps at once.
 
         Results come from IDA's cached string list, which is built once
-        during initial analysis (wait_for_analysis).  If you patch bytes,
+        during auto-analysis (analyze_database).  If you patch bytes,
         define new data, or otherwise create/destroy strings after that,
         call rebuild_string_list first to refresh the cache.
 
@@ -410,7 +410,7 @@ def register(mcp: FastMCP):
         does NOT auto-decompile.  Use the returned function addresses
         with decompile_function to inspect the code.
 
-        Uses IDA's cached string list (built during wait_for_analysis).
+        Uses IDA's cached string list (built during analyze_database).
         If you patch bytes or define new data, call rebuild_string_list
         first to refresh the cache.
 

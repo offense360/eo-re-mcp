@@ -750,6 +750,49 @@ def _error_call_result(msg: str) -> types.CallToolResult:
     )
 
 
+class TestRoutingToolExplicitAnalyze:
+    """An explicit ``analyze_database`` call must leave the worker in the same
+    state as a completed background analysis: fresh metadata, no stale error."""
+
+    def _pool_with_analyze(self, initial_metadata: dict) -> tuple[WorkerPoolProvider, Worker]:
+        pool = _setup_pool([_make_mcp_tool("analyze_database")])
+        worker = _add_worker(pool, "db1", {})
+        worker.metadata.update(initial_metadata)
+        pool.attach_current_session = lambda w: None
+        pool.proxy_to_worker = AsyncMock(
+            return_value=_ok_result(
+                {"status": "analysis_complete", "function_count": 198, "segment_count": 9}
+            )
+        )
+        return pool, worker
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_refreshes_worker_metadata(self):
+        """function_count/segment_count from the analyze result replace stale values."""
+        pool, worker = self._pool_with_analyze({"function_count": 12, "segment_count": 8})
+
+        await pool._routing_tools["analyze_database"].run({"database": "db1"})
+
+        assert worker.analyzed is True
+        assert worker.metadata["function_count"] == 198
+        assert worker.metadata["segment_count"] == 9
+        assert pool._worker_status(worker)["function_count"] == 198
+
+    @pytest.mark.asyncio
+    async def test_explicit_analyze_clears_prior_analysis_error(self):
+        """A successful explicit analysis recovers a worker whose background pass failed."""
+        pool, worker = self._pool_with_analyze({})
+        worker.record_analysis_error("boom")
+
+        await pool._routing_tools["analyze_database"].run({"database": "db1"})
+
+        assert worker.analysis_error is None
+        result = await pool.wait_for_ready("db1")
+        assert result["status"] == "ready"
+        # wait_for_ready must not have re-run analysis.
+        assert pool.proxy_to_worker.await_count == 1
+
+
 class TestBackgroundAnalysis:
     """Test WorkerPoolProvider._background_analysis coroutine."""
 
@@ -1293,14 +1336,61 @@ class TestWaitForReady:
     """Test WorkerPoolProvider.wait_for_ready."""
 
     @pytest.mark.asyncio
-    async def test_ready_worker_returns_immediately(self):
+    async def test_ready_analyzed_worker_returns_immediately(self):
         pool = _setup_pool([])
         worker = _add_worker(pool, "db1", {})
         worker._ready_event.set()
+        worker.mark_analyzed()
+        pool.proxy_to_worker = AsyncMock()
 
         result = await pool.wait_for_ready("db1")
         assert result["status"] == "ready"
         assert result["database"] == "db1"
+        # Already analyzed → no analysis pass triggered.
+        pool.proxy_to_worker.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unanalyzed_worker_triggers_analysis(self):
+        """A ready-but-unanalyzed worker gets a one-time analysis pass."""
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+
+        wait_result = _ok_result({"status": "analysis_complete"})
+        info_result = _ok_result({"function_count": 42})
+        pool.proxy_to_worker = AsyncMock(side_effect=[wait_result, info_result])
+
+        result = await pool.wait_for_ready("db1")
+
+        assert result["status"] == "ready"
+        assert worker.analyzed is True
+        # First proxied call runs the analyze_database tool.
+        assert pool.proxy_to_worker.call_args_list[0][0][1] == "analyze_database"
+
+    @pytest.mark.asyncio
+    async def test_analyzed_worker_not_reanalyzed(self):
+        """wait_for_ready does not re-run analysis once a worker is analyzed."""
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+        worker.mark_analyzed()
+        pool.proxy_to_worker = AsyncMock()
+
+        await pool.wait_for_ready("db1")
+        pool.proxy_to_worker.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prior_analysis_error_not_retried(self):
+        """A worker whose analysis already failed is not silently retried."""
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+        worker.record_analysis_error("boom")
+        pool.proxy_to_worker = AsyncMock()
+
+        with pytest.raises(BackendError, match="Analysis failed"):
+            await pool.wait_for_ready("db1")
+        pool.proxy_to_worker.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_spawn_failure_raises(self):
@@ -1318,6 +1408,7 @@ class TestWaitForReady:
         pool = _setup_pool([])
         worker = _add_worker(pool, "db1", {})
         worker.state = WorkerState.STARTING
+        worker.mark_analyzed()
 
         async def _set_ready():
             await asyncio.sleep(0.01)

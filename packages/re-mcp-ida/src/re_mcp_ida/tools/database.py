@@ -177,7 +177,7 @@ def register(mcp: FastMCP):
 
         Set run_auto_analysis=True only for first-time analysis of a new binary
         (no existing .i64). For existing databases, analysis is already stored —
-        leave this False to avoid blocking. Call wait_for_analysis separately if needed.
+        leave this False to avoid blocking. Use analyze_database to run analysis later.
 
         Args:
             file_path: Path to the binary file or IDA database (.i64/.idb).

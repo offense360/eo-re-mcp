@@ -36,7 +36,7 @@ Core database lifecycle management.
 
 | Tool | Description |
 |------|-------------|
-| `open_database` | Open a binary file or existing database for analysis. Must be called before any analysis tool. By default, previously opened databases from this session remain open; pass `keep_open=False` to save and close databases owned by the current session first. Use `database_id` to assign a custom identifier. Returns immediately — the database is not ready for tool calls until `wait_for_analysis` returns. When `run_auto_analysis=True`, `wait_for_analysis` also waits for auto-analysis to complete. Pass `force_new=True` to delete any existing database files and start fresh (destructive). **IDA-specific:** `processor`, `loader`, `base_address`, `options` override auto-detection for raw binaries; `fat_arch` selects a Mach-O universal slice. **Ghidra-specific:** `language` and `compiler_spec` override auto-detection. See `list_targets` for available options. |
+| `open_database` | Open a binary file or existing database for analysis. Must be called before any analysis tool. By default, previously opened databases from this session remain open; pass `keep_open=False` to save and close databases owned by the current session first. Use `database_id` to assign a custom identifier. Returns immediately — the database is not ready for tool calls until `wait_for_analysis` returns. `wait_for_analysis` runs auto-analysis once if it has not run yet, regardless of `run_auto_analysis`; `run_auto_analysis=True` only starts that pass in the background right after opening. Pass `force_new=True` to delete any existing database files and start fresh (destructive). **IDA-specific:** `processor`, `loader`, `base_address`, `options` override auto-detection for raw binaries; `fat_arch` selects a Mach-O universal slice. **Ghidra-specific:** `language` and `compiler_spec` override auto-detection. See `list_targets` for available options. |
 | `close_database` | Close a database, optionally saving changes. When other sessions are still attached, detaches the current session and keeps the worker alive. Use `force=True` to close regardless of other sessions. |
 | `save_database` | Save a database without closing it. Fails if the database is not attached to the current session unless `force=True`. |
 | `list_databases` | List all currently open databases with metadata (file path, processor, bitness, etc.). Includes `opening` and `analyzing` flags for databases that are still loading or being analyzed. |
@@ -49,7 +49,7 @@ Core database lifecycle management.
 | `get_fileregion_offset` | Map a virtual address to a file offset (IDA). |
 | `get_elf_debug_file_directory` | Get the ELF debug file directory path (IDA). |
 | `reload_file` | Reload byte values from the input file (IDA). |
-| `wait_for_analysis` | Wait for one or more databases to finish opening and/or auto-analysis. Blocks until the database is ready for tool calls. Call this after `open_database`. Pass `databases` (a list) to wait for several at once — returns as soon as at least one is ready. |
+| `wait_for_analysis` | Wait for one or more databases to finish opening, run auto-analysis once if it has not run yet, and block until the database is ready for tool calls. The first call on a freshly opened database therefore takes as long as analysis; other tools on that database are rejected while it runs. Call this after `open_database`. Pass `databases` (a list) to wait for several at once — returns as soon as at least one is ready. |
 | `list_targets` | List available processor modules, loaders, and language/compiler options. Returns names that can be passed to `open_database`. |
 
 ## Functions
@@ -395,6 +395,7 @@ Auto-analysis control, problems, fixups, exception handlers, and segment registe
 
 | Tool | Description |
 |------|-------------|
+| `analyze_database` | Run auto-analysis to completion on an open database and return post-analysis statistics. `wait_for_analysis` calls this automatically the first time; call it directly to re-analyze after patches or type changes. Blocks other tools on the database while running. |
 | `reanalyze_range` | Trigger auto-analysis on an address range. |
 | `get_analysis_problems` | List analysis problems and conflicts. Paginated. |
 | `get_fixups` | List relocation/fixup records in an address range. Paginated (IDA). |

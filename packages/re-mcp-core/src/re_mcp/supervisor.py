@@ -177,13 +177,18 @@ class ProxyMCP(FastMCP):
             database: str = "",
             databases: list[str] | None = None,
         ) -> dict:
-            """Block until database(s) finish opening and optional auto-analysis.
+            """Block until database(s) finish opening and are analyzed.
+
+            Runs auto-analysis once if it has not run yet (``open_database``
+            defaults to ``run_auto_analysis=False``), so the first call on a
+            fresh database takes as long as analysis. Later calls return
+            immediately. Use ``analyze_database`` to re-run analysis.
 
             **Single:** pass ``database`` to wait for one DB.
             **Multi:** pass ``databases`` list — returns when **at least one**
             is ready. Work on the ready one, call again for the rest.
 
-            While analysis runs, the backend thread is blocked — tool calls queue.
+            While analysis runs, other tools on that database are rejected.
 
             Args:
                 database: Single database ID to wait for.
