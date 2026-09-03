@@ -10,6 +10,7 @@ tool modules can import everything from a single place.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from re_mcp.helpers import (
@@ -61,11 +62,39 @@ __all__ = [
     "resolve_function",
     "set_main_executor",
     "to_ghidra_address",
+    "transaction",
     "write_memory",
 ]
 
 # Backend dispatch alias
 call_ghidra = dispatch_to_main
+
+
+# ---------------------------------------------------------------------------
+# Transactions
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def transaction(program, label: str):
+    """Run a mutation inside a Ghidra transaction.
+
+    Always ends the transaction with ``commit=True``, even on error. Under
+    GhidraProject's long-lived batch transaction an aborted nested entry
+    marks the whole batch ABORTED and Ghidra rolls back every change since
+    the last save when it ends (#11). Callers must validate before mutating.
+    """
+    tx_id = program.startTransaction(label)
+    try:
+        yield
+    except Exception:
+        log.warning(
+            "Transaction %r failed; committing partial state to avoid batch rollback (#11)",
+            label,
+        )
+        raise
+    finally:
+        program.endTransaction(tx_id, True)
 
 
 # ---------------------------------------------------------------------------
