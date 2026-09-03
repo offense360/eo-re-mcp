@@ -799,6 +799,26 @@ def _extract_error_text(result: types.CallToolResult, default: str = "Worker err
     return first.text if isinstance(first, types.TextContent) else default
 
 
+def _split_close_error(text: str) -> dict[str, Any]:
+    """Turn a worker error payload into ``close_error`` / ``close_error_type`` fields.
+
+    Workers report structured errors as a JSON object (``{"error": ...,
+    "error_type": ...}``).  Surface those as separate fields so clients do not
+    have to parse ``close_error`` a second time; anything else (plain text,
+    exception text, JSON of another shape) is passed through verbatim.
+    """
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return {"close_error": text}
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+        fields: dict[str, Any] = {"close_error": parsed["error"]}
+        if isinstance(parsed.get("error_type"), str):
+            fields["close_error_type"] = parsed["error_type"]
+        return fields
+    return {"close_error": text}
+
+
 def _error_result(
     message: str,
     error_type: str,
@@ -1737,7 +1757,7 @@ class WorkerPoolProvider(Provider):
             await self._close_client(worker)
         response: dict[str, Any] = {"status": "closed", "database": db_id}
         if close_error:
-            response["close_error"] = close_error
+            response.update(_split_close_error(close_error))
         return response
 
     async def close_for_session(
