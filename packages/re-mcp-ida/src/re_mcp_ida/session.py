@@ -207,8 +207,16 @@ class Session:
         # path that actually corresponds to a ``.i64`` on disk.
         self._current_path = target_stem
         self.capabilities = self._probe_capabilities()
-        log.info("Opened database: %s (capabilities: %s)", target_stem, self.capabilities)
-        return {"status": "ok", "path": target_stem, "warnings": warnings}
+        # A stored .i64 whose auto-analysis queue is empty is already analyzed;
+        # a fresh open (no sidecar) only has entry points defined.
+        analyzed = bool(sidecar_exists and ida_auto.auto_is_ok())
+        log.info(
+            "Opened database: %s (analyzed=%s, capabilities: %s)",
+            target_stem,
+            analyzed,
+            self.capabilities,
+        )
+        return {"status": "ok", "path": target_stem, "warnings": warnings, "analyzed": analyzed}
 
     def _probe_capabilities(self) -> dict[str, bool]:
         """Detect which optional features are available for the current database."""

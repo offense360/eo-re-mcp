@@ -1559,6 +1559,130 @@ class TestWaitForReady:
 
 
 # ---------------------------------------------------------------------------
+# _background_spawn seeds Worker.analyzed from open_database (#8)
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnSeedsAnalyzedFlag:
+    """``_background_spawn`` must seed ``Worker.analyzed`` from the worker's
+    ``open_database`` result so an already-analyzed database is not re-analyzed
+    by the first ``wait_for_analysis`` (#8)."""
+
+    def _pool(self, open_data: dict) -> tuple[WorkerPoolProvider, Worker, type]:
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.state = WorkerState.STARTING
+        open_result = _ok_result(
+            {"status": "ok", "pid": 4242, "function_count": 198, "segment_count": 9, **open_data}
+        )
+
+        class _FakeClient:
+            def __init__(self, transport):
+                self.calls: list[tuple[str, dict]] = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def call_tool_mcp(self, name, args):
+                self.calls.append((name, args))
+                return open_result
+
+        pool._worker_transport = lambda label="bootstrap": None
+        pool._spawn_death_watcher = lambda w: None
+        pool.proxy_to_worker = AsyncMock(
+            side_effect=[
+                _ok_result({"status": "analysis_complete"}),
+                _ok_result({"function_count": 198}),
+            ]
+        )
+        return pool, worker, _FakeClient
+
+    async def _spawn(self, pool, worker, fake_client, *, run_auto_analysis: bool) -> None:
+        with patch("re_mcp.worker_provider.Client", fake_client):
+            await pool._background_spawn(
+                worker,
+                "/tmp/db1",
+                "/tmp/db1",
+                "db1",
+                run_auto_analysis=run_auto_analysis,
+                force_new=False,
+                stale_worker=None,
+                mcp_session=None,
+            )
+
+    @staticmethod
+    def _analyze_calls(pool) -> int:
+        return sum(1 for c in pool.proxy_to_worker.call_args_list if c[0][1] == "analyze_database")
+
+    @pytest.mark.asyncio
+    async def test_analyzed_true_seeds_flag(self):
+        pool, worker, fake = self._pool({"analyzed": True})
+
+        await self._spawn(pool, worker, fake, run_auto_analysis=False)
+
+        assert worker.analyzed is True
+        result = await pool.wait_for_ready("db1")
+        assert result["status"] == "ready"
+        assert self._analyze_calls(pool) == 0
+
+    @pytest.mark.asyncio
+    async def test_analyzed_false_does_not_seed(self):
+        pool, worker, fake = self._pool({"analyzed": False})
+
+        await self._spawn(pool, worker, fake, run_auto_analysis=False)
+
+        assert worker.analyzed is False
+        await pool.wait_for_ready("db1")
+        assert self._analyze_calls(pool) == 1
+
+    @pytest.mark.asyncio
+    async def test_analyzed_missing_defaults_false(self):
+        """Older workers that do not report ``analyzed`` keep the old behaviour."""
+        pool, worker, fake = self._pool({})
+
+        await self._spawn(pool, worker, fake, run_auto_analysis=False)
+
+        assert worker.analyzed is False
+        await pool.wait_for_ready("db1")
+        assert self._analyze_calls(pool) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_auto_analysis_ignores_seed(self):
+        """``run_auto_analysis=True`` always starts a background pass, even if
+        the worker reports the database as already analyzed."""
+        pool, worker, fake = self._pool({"analyzed": True})
+
+        await self._spawn(pool, worker, fake, run_auto_analysis=True)
+
+        task = worker._analysis_task
+        assert task is not None
+        await task
+        assert self._analyze_calls(pool) == 1
+
+    def test_worker_status_exposes_analyzed(self):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+
+        assert pool._worker_status(worker).get("analyzed") is False
+        worker.mark_analyzed()
+        assert pool._worker_status(worker).get("analyzed") is True
+
+    def test_database_list_exposes_analyzed(self):
+        """list_databases (build_database_list) reports the seeded flag too."""
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker._ready_event.set()
+
+        assert pool.build_database_list()["databases"][0].get("analyzed") is False
+        worker.mark_analyzed()
+        assert pool.build_database_list()["databases"][0].get("analyzed") is True
+
+
+# ---------------------------------------------------------------------------
 # resolve_worker with STARTING state
 # ---------------------------------------------------------------------------
 
