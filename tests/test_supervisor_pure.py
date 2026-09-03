@@ -1022,6 +1022,65 @@ class TestShutdownWorkerSurfacesErrors:
         close_client.assert_awaited_once_with(worker)
 
     @pytest.mark.asyncio
+    async def test_worker_json_error_is_split_into_message_and_type(self, caplog):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        self._prepare(pool, worker)
+        payload = json.dumps({"error": "Error closing database x", "error_type": "CloseFailed"})
+        worker.client.call_tool_mcp = AsyncMock(return_value=_error_call_result(payload))
+
+        with caplog.at_level(logging.WARNING, logger="re_mcp.worker_provider"):
+            result = await pool.close_for_session(worker, "s1")
+
+        assert result["status"] == "closed"
+        assert result["close_error"] == "Error closing database x"
+        assert result["close_error_type"] == "CloseFailed"
+
+    @pytest.mark.asyncio
+    async def test_worker_json_error_without_type_has_no_type_field(self):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        self._prepare(pool, worker)
+        worker.client.call_tool_mcp = AsyncMock(
+            return_value=_error_call_result(json.dumps({"error": "boom"}))
+        )
+
+        result = await pool.close_for_session(worker, "s1")
+
+        assert result["close_error"] == "boom"
+        assert "close_error_type" not in result
+
+    @pytest.mark.asyncio
+    async def test_worker_non_json_error_is_kept_verbatim(self):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        self._prepare(pool, worker)
+        worker.client.call_tool_mcp = AsyncMock(return_value=_error_call_result("transport closed"))
+
+        result = await pool.close_for_session(worker, "s1")
+
+        assert result["close_error"] == "transport closed"
+        assert "close_error_type" not in result
+
+    @pytest.mark.asyncio
+    async def test_worker_json_error_of_other_shape_is_kept_verbatim(self):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        self._prepare(pool, worker)
+        worker.client.call_tool_mcp = AsyncMock(
+            return_value=_error_call_result('["not", "a dict"]')
+        )
+
+        result = await pool.close_for_session(worker, "s1")
+
+        assert result["close_error"] == '["not", "a dict"]'
+        assert "close_error_type" not in result
+
+    @pytest.mark.asyncio
     async def test_successful_close_has_no_error_field(self, caplog):
         pool = _setup_pool([])
         worker = _add_worker(pool, "db1", {})

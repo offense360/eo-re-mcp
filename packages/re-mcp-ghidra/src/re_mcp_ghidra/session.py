@@ -196,49 +196,50 @@ class Session:
             "decompiler": True,
         }
 
-    def _end_open_transactions(self) -> None:
-        """End any active transactions so save/undo can proceed.
-
-        Ghidra cannot save or undo while a transaction is active.  The
-        pyghidra environment (or tool calls whose endTransaction was
-        swallowed by the JVM) may leave a transaction open.
-
-        Strategy: commit first (preserving data from tool operations),
-        then abort any cascading listener transactions that the commit
-        triggers.  Aborting listener-opened transactions is safe because
-        they only contain bookkeeping that will be regenerated on next
-        analysis.
-        """
-        import contextlib  # noqa: PLC0415
-
-        tx_info = self._program.getCurrentTransactionInfo()
-        if tx_info is None:
-            return
-        # Commit to preserve tool data.
-        with contextlib.suppress(Exception):
-            self._program.endTransaction(int(tx_info.getID()), True)
-        # Abort cascading listener transactions to break the cycle.
-        for _ in range(10):
-            tx_info = self._program.getCurrentTransactionInfo()
-            if tx_info is None:
-                return
-            with contextlib.suppress(Exception):
-                self._program.endTransaction(int(tx_info.getID()), False)
+    def _tx_state(self) -> str:
+        """Describe the current transaction and save-related flags (for DEBUG logs)."""
+        program = self._program
+        if program is None:
+            return "program=None"
+        try:
+            tx = program.getCurrentTransactionInfo()
+            if tx is None:
+                tx_desc = "tx=None"
+            else:
+                tx_desc = (
+                    f"tx(id={tx.getID()} status={tx.getStatus()} desc={tx.getDescription()!r} "
+                    f"open_sub={list(tx.getOpenSubTransactions())})"
+                )
+            df = program.getDomainFile()
+            df_desc = "df=None" if df is None else f"canSave={df.canSave()} isBusy={df.isBusy()}"
+            return (
+                f"{tx_desc} {df_desc} isChanged={program.isChanged()} isLocked={program.isLocked()}"
+            )
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            return f"<state unavailable: {exc}>"
 
     def save(self) -> None:
-        """Persist the current program to disk."""
+        """Persist the current program to disk.
+
+        GhidraProject keeps a long-lived "Batch Processing" transaction open
+        for every program it imports or opens and tracks its id privately.
+        Only ``GhidraProject.save()`` / ``saveAs()`` end that transaction
+        before writing (and start a fresh one afterwards); calling
+        ``DomainFile.save()`` directly fails with "Unable to lock due to
+        active transaction".  ``saveAs`` is required for the first save of an
+        imported program, which has no project file yet (``canSave()`` false).
+        """
         if self._program is None or self._project is None:
             raise GhidraError("No database is open.", error_type="NoDatabase")
 
-        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
-
-        self._end_open_transactions()
-
         df = self._program.getDomainFile()
+        log.debug("save: before save %s", self._tx_state())
         if df is not None and df.canSave():
-            df.save(TaskMonitor.DUMMY)
+            self._project.save(self._program)
+            log.debug("save: project.save done %s", self._tx_state())
         else:
             self._project.saveAs(self._program, "/", self._program.getName(), True)
+            log.debug("save: saveAs done %s", self._tx_state())
 
     def close(self, save: bool = True) -> dict:
         """Close the current database.
@@ -249,6 +250,7 @@ class Session:
             return {"status": "no_database_open"}
 
         path = self._current_path
+        log.debug("close(save=%s): enter %s", save, self._tx_state())
         try:
             if save and self._program is not None and self._project is not None:
                 self.save()
