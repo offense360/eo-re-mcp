@@ -196,6 +196,28 @@ class Session:
             "decompiler": True,
         }
 
+    def _tx_state(self) -> str:
+        """Describe the current transaction and save-related flags (for DEBUG logs)."""
+        program = self._program
+        if program is None:
+            return "program=None"
+        try:
+            tx = program.getCurrentTransactionInfo()
+            if tx is None:
+                tx_desc = "tx=None"
+            else:
+                tx_desc = (
+                    f"tx(id={tx.getID()} status={tx.getStatus()} desc={tx.getDescription()!r} "
+                    f"open_sub={list(tx.getOpenSubTransactions())})"
+                )
+            df = program.getDomainFile()
+            df_desc = "df=None" if df is None else f"canSave={df.canSave()} isBusy={df.isBusy()}"
+            return (
+                f"{tx_desc} {df_desc} isChanged={program.isChanged()} isLocked={program.isLocked()}"
+            )
+        except Exception as exc:  # pragma: no cover - diagnostics only
+            return f"<state unavailable: {exc}>"
+
     def _end_open_transactions(self) -> None:
         """End any active transactions so save/undo can proceed.
 
@@ -235,10 +257,13 @@ class Session:
         self._end_open_transactions()
 
         df = self._program.getDomainFile()
+        log.debug("save: before save %s", self._tx_state())
         if df is not None and df.canSave():
             df.save(TaskMonitor.DUMMY)
+            log.debug("save: df.save done %s", self._tx_state())
         else:
             self._project.saveAs(self._program, "/", self._program.getName(), True)
+            log.debug("save: saveAs done %s", self._tx_state())
 
     def close(self, save: bool = True) -> dict:
         """Close the current database.
@@ -249,6 +274,7 @@ class Session:
             return {"status": "no_database_open"}
 
         path = self._current_path
+        log.debug("close(save=%s): enter %s", save, self._tx_state())
         try:
             if save and self._program is not None and self._project is not None:
                 self.save()

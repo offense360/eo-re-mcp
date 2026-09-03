@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastmcp import FastMCP
@@ -14,6 +15,8 @@ from pydantic import BaseModel, Field
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import ANNO_MUTATE, ANNO_READ_ONLY, format_address
 from re_mcp_ghidra.session import session
+
+log = logging.getLogger(__name__)
 
 
 class OpenDatabaseResult(BaseModel):
@@ -140,4 +143,5 @@ def register(mcp: FastMCP) -> None:
                 error_type="UnsupportedOperation",
             )
         session.save()
+        log.debug("save_database: after save %s", session._tx_state())
         return SaveDatabaseResult(status="saved", path=session.current_path)
