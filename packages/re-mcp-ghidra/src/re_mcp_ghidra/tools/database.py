@@ -30,6 +30,13 @@ class OpenDatabaseResult(BaseModel):
     segment_count: int = Field(description="Number of memory segments.")
     capabilities: dict[str, bool] = Field(description="Available capabilities.")
     warnings: list[str] = Field(default_factory=list, description="Any warnings.")
+    analyzed: bool = Field(
+        default=False,
+        description=(
+            "True when the database was already analyzed when opened; "
+            "wait_for_analysis will not re-run analysis."
+        ),
+    )
 
 
 class DatabaseInfoResult(BaseModel):
@@ -88,6 +95,7 @@ def register(mcp: FastMCP) -> None:
             segment_count=len(list(mem.getBlocks())),
             capabilities=session.capabilities,
             warnings=result.get("warnings", []),
+            analyzed=result.get("analyzed", False),
         )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"database"})

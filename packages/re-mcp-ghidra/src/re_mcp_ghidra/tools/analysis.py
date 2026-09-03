@@ -113,6 +113,8 @@ def register(mcp: FastMCP) -> None:
         program = session.program
 
         GhidraProject.analyze(program)
+        # Persist the analyzed flag so a reopened project is not re-analyzed (#8).
+        session.mark_program_analyzed()
 
         func_mgr = program.getFunctionManager()
         memory = program.getMemory()

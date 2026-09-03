@@ -69,6 +69,7 @@ class Session:
             CompilerSpecID,
             LanguageID,
         )
+        from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
         from java.io import File, FileNotFoundException  # noqa: PLC0415
 
@@ -92,6 +93,9 @@ class Session:
 
         warnings: list[str] = []
         project = None
+        # True only for a program restored from the project whose stored
+        # "analyzed" option is set; anything imported is unanalyzed.
+        analyzed = False
 
         try:
             if force_new and os.path.exists(project_file):
@@ -124,6 +128,8 @@ class Session:
                             f"Failed to import {path} into existing project",
                             error_type="ImportFailed",
                         )
+                else:
+                    analyzed = bool(GhidraProgramUtilities.isAnalyzed(program))
             else:
                 project = GhidraProject.createProject(project_location, project_name, False)
                 lang_svc = None
@@ -167,10 +173,12 @@ class Session:
                     )
 
             if run_auto_analysis:
-                from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
-
-                GhidraProgramUtilities.setAnalyzedFlag(program, False)
+                # Ghidra 12.x has no setAnalyzedFlag(); reset the flags so a
+                # forced pass starts clean, then persist the result.
+                GhidraProgramUtilities.resetAnalysisFlags(program)
                 GhidraProject.analyze(program)
+                GhidraProgramUtilities.markProgramAnalyzed(program)
+                analyzed = True
 
         except GhidraError:
             raise
@@ -187,8 +195,23 @@ class Session:
         self._current_path = path
         self._flat_api = FlatProgramAPI(program, TaskMonitor.DUMMY)
         self.capabilities = self._probe_capabilities()
-        log.info("Opened database: %s (capabilities: %s)", path, self.capabilities)
-        return {"status": "ok", "path": path, "warnings": warnings}
+        log.info(
+            "Opened database: %s (analyzed=%s, capabilities: %s)", path, analyzed, self.capabilities
+        )
+        return {"status": "ok", "path": path, "warnings": warnings, "analyzed": analyzed}
+
+    def mark_program_analyzed(self) -> None:
+        """Persist the "analyzed" program option after a completed analysis pass.
+
+        Stored in the program's PROGRAM_INFO options, so it survives ``save()``
+        and makes ``GhidraProgramUtilities.isAnalyzed`` true when the project
+        is reopened (see ``open()``).
+        """
+        from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
+
+        if self._program is None:
+            raise GhidraError("No database is open.", error_type="NoDatabase")
+        GhidraProgramUtilities.markProgramAnalyzed(self._program)
 
     def _probe_capabilities(self) -> dict[str, bool]:
         """Detect which optional features are available."""

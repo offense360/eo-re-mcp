@@ -147,7 +147,15 @@ def ghidra_stubs(monkeypatch):
 
     Returns a dict the test uses to configure the fake project.
     """
-    state: dict = {"project": None, "open_project_calls": []}
+    state: dict = {
+        "project": None,
+        "open_project_calls": [],
+        # GhidraProgramUtilities stub: what isAnalyzed() reports, whether
+        # GhidraProject.analyze() may be called, and an ordered call log.
+        "is_analyzed": False,
+        "allow_analyze": False,
+        "calls": [],
+    }
 
     class GhidraProject:
         @staticmethod
@@ -161,7 +169,25 @@ def ghidra_stubs(monkeypatch):
 
         @staticmethod
         def analyze(program):
-            raise AssertionError("analyze must not be called in these tests")
+            if not state["allow_analyze"]:
+                raise AssertionError("analyze must not be called in these tests")
+            state["calls"].append(("analyze", program))
+
+    class GhidraProgramUtilities:
+        """Only the members that exist in Ghidra 12.1.2 — no setAnalyzedFlag."""
+
+        @staticmethod
+        def isAnalyzed(program):
+            state["calls"].append(("isAnalyzed", program))
+            return state["is_analyzed"]
+
+        @staticmethod
+        def markProgramAnalyzed(program):
+            state["calls"].append(("mark", program))
+
+        @staticmethod
+        def resetAnalysisFlags(program):
+            state["calls"].append(("reset", program))
 
     class TaskMonitor:
         DUMMY = object()
@@ -184,6 +210,9 @@ def ghidra_stubs(monkeypatch):
         "ghidra.program.model": _make_module("ghidra.program.model"),
         "ghidra.program.model.lang": _make_module(
             "ghidra.program.model.lang", CompilerSpecID=MagicMock(), LanguageID=MagicMock()
+        ),
+        "ghidra.program.util": _make_module(
+            "ghidra.program.util", GhidraProgramUtilities=GhidraProgramUtilities
         ),
         "ghidra.util": _make_module("ghidra.util"),
         "ghidra.util.task": _make_module("ghidra.util.task", TaskMonitor=TaskMonitor),
@@ -339,3 +368,60 @@ def test_close_save_failure_raises_close_failed(ghidra_stubs, existing_project):
     assert excinfo.value.error_type == "CloseFailed"
     assert project.save_calls == [program]
     assert not session.is_open()
+
+
+# ---------------------------------------------------------------------------
+# analyzed flag reporting — issue #8
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_open_existing_program_reports_isAnalyzed(ghidra_stubs, existing_project, flag):
+    program = MagicMock(name="program")
+    ghidra_stubs["project"] = FakeProject(program, None)
+    ghidra_stubs["is_analyzed"] = flag
+
+    _, result = _open(existing_project)
+
+    assert result.get("analyzed") is flag
+    assert ("isAnalyzed", program) in ghidra_stubs["calls"]
+
+
+def test_open_import_reports_not_analyzed(ghidra_stubs, existing_project):
+    """A (re)imported program is never analyzed, whatever isAnalyzed would say."""
+    program = MagicMock(name="program")
+    ghidra_stubs["project"] = FakeProject(FakeFileNotFoundException("no program"), program)
+    ghidra_stubs["is_analyzed"] = True
+
+    _, result = _open(existing_project)
+
+    assert result.get("analyzed") is False
+    assert ("isAnalyzed", program) not in ghidra_stubs["calls"]
+
+
+def test_open_with_run_auto_analysis_resets_then_marks(ghidra_stubs, existing_project):
+    """run_auto_analysis=True: resetAnalysisFlags → analyze → markProgramAnalyzed.
+
+    Ghidra 12.1.2 has no ``setAnalyzedFlag``; the stub deliberately omits it so
+    the old call fails here.
+    """
+    program = MagicMock(name="program")
+    ghidra_stubs["project"] = FakeProject(program, None)
+    ghidra_stubs["allow_analyze"] = True
+
+    session = Session()
+    result = session.open(str(existing_project), run_auto_analysis=True)
+
+    ordered = [c for c in ghidra_stubs["calls"] if c[0] in ("reset", "analyze", "mark")]
+    assert ordered == [("reset", program), ("analyze", program), ("mark", program)]
+    assert result.get("analyzed") is True
+
+
+def test_mark_program_analyzed_calls_utility(ghidra_stubs, existing_project):
+    program = MagicMock(name="program")
+    session, _ = _open_existing(ghidra_stubs, existing_project, program)
+    assert hasattr(session, "mark_program_analyzed")
+
+    session.mark_program_analyzed()
+
+    assert ghidra_stubs["calls"][-1] == ("mark", program)
