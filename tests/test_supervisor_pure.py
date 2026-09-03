@@ -972,6 +972,73 @@ class TestCloseForSession:
 
 
 # ---------------------------------------------------------------------------
+# _shutdown_worker error surfacing (issue #7)
+# ---------------------------------------------------------------------------
+
+
+class TestShutdownWorkerSurfacesErrors:
+    """Worker-side close_database failures must be logged and reported."""
+
+    def _prepare(self, pool: WorkerPoolProvider, worker: Worker) -> AsyncMock:
+        worker.client = MagicMock()
+        close_client = AsyncMock()
+        pool._close_client = close_client
+        return close_client
+
+    @pytest.mark.asyncio
+    async def test_worker_error_result_is_reported(self, caplog):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        close_client = self._prepare(pool, worker)
+        worker.client.call_tool_mcp = AsyncMock(
+            return_value=_error_call_result("Error closing database x: Unable to lock")
+        )
+
+        with caplog.at_level(logging.WARNING, logger="re_mcp.worker_provider"):
+            result = await pool.close_for_session(worker, "s1")
+
+        assert result["status"] == "closed"
+        assert result["database"] == "db1"
+        assert "Unable to lock" in result["close_error"]
+        assert any(r.levelno >= logging.WARNING and "db1" in r.getMessage() for r in caplog.records)
+        close_client.assert_awaited_once_with(worker)
+
+    @pytest.mark.asyncio
+    async def test_worker_exception_is_reported(self, caplog):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        close_client = self._prepare(pool, worker)
+        worker.client.call_tool_mcp = AsyncMock(side_effect=RuntimeError("transport closed"))
+
+        with caplog.at_level(logging.WARNING, logger="re_mcp.worker_provider"):
+            result = await pool.close_for_session(worker, "s1")
+
+        assert result["status"] == "closed"
+        assert "transport closed" in result["close_error"]
+        assert "RuntimeError" in result["close_error"]
+        assert any(r.levelno >= logging.WARNING and "db1" in r.getMessage() for r in caplog.records)
+        close_client.assert_awaited_once_with(worker)
+
+    @pytest.mark.asyncio
+    async def test_successful_close_has_no_error_field(self, caplog):
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.attach("s1")
+        close_client = self._prepare(pool, worker)
+        worker.client.call_tool_mcp = AsyncMock(return_value=_ok_result({"status": "closed"}))
+
+        with caplog.at_level(logging.WARNING, logger="re_mcp.worker_provider"):
+            result = await pool.close_for_session(worker, "s1")
+
+        assert result == {"status": "closed", "database": "db1"}
+        assert "close_error" not in result
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        close_client.assert_awaited_once_with(worker)
+
+
+# ---------------------------------------------------------------------------
 # detach_all
 # ---------------------------------------------------------------------------
 

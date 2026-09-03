@@ -1718,17 +1718,27 @@ class WorkerPoolProvider(Provider):
                 await spawn_task
         await worker.cancel_analysis()
 
+        close_error: str | None = None
         try:
             if worker.client and worker.state != WorkerState.DEAD:
                 try:
                     async with asyncio.timeout(60):
                         async with worker.dispatch():
-                            await worker.client.call_tool_mcp("close_database", {"save": save})
-                except Exception:
-                    log.debug("close_database on worker %s failed", db_id, exc_info=True)
+                            result = await worker.client.call_tool_mcp(
+                                "close_database", {"save": save}
+                            )
+                    if result.isError:
+                        close_error = _extract_error_text(result, "close_database failed")
+                        log.warning("close_database on worker %s failed: %s", db_id, close_error)
+                except Exception as exc:
+                    close_error = f"{type(exc).__name__}: {exc}"
+                    log.warning("close_database on worker %s failed", db_id, exc_info=True)
         finally:
             await self._close_client(worker)
-        return {"status": "closed", "database": db_id}
+        response: dict[str, Any] = {"status": "closed", "database": db_id}
+        if close_error:
+            response["close_error"] = close_error
+        return response
 
     async def close_for_session(
         self,
