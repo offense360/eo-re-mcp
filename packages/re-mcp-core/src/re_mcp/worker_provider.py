@@ -362,8 +362,17 @@ class Worker:
 
     @property
     def opening(self) -> bool:
-        """True if the worker is still being spawned/opened in the background."""
-        return self._state == WorkerState.STARTING and not self._ready_event.is_set()
+        """True until the background open has signalled ``_ready_event``.
+
+        Derived from the event rather than from ``state``: ``_background_spawn``
+        sets ``state = IDLE`` and then awaits a client log before setting the
+        event, and a waiter that judged by ``state`` in that window would start
+        an analysis task the spawn then replaced (#5).  A worker that has not
+        been spawned at all (``STARTING`` with no spawn task) is still opening.
+        """
+        if self._ready_event.is_set():
+            return False
+        return self._spawn_task is not None or self._state == WorkerState.STARTING
 
     @property
     def spawn_error(self) -> str | None:
@@ -374,12 +383,26 @@ class Worker:
         """Block until the worker has finished opening (or failed)."""
         await self._ready_event.wait()
 
-    def start_analysis(self, coro: Coroutine[Any, Any, None]) -> None:
-        """Start a background analysis coroutine as an ``asyncio.Task``."""
+    def start_analysis(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Start *coro* as the worker's analysis task and return that task.
+
+        If an analysis task is already running it is kept and returned
+        unchanged (*coro* is closed unawaited): every start path shares one
+        task so concurrent callers join it instead of running a second pass.
+        """
+        task = self._analysis_task
+        if task is not None and not task.done():
+            log.debug(
+                "start_analysis: analysis already running for %s, keeping existing task",
+                self.database_id,
+            )
+            coro.close()
+            return task
         self._analysis_error = None
         self._analysis_task = asyncio.create_task(
             coro, name=f"background-analysis-{self.database_id}"
         )
+        return self._analysis_task
 
     def record_analysis_error(self, message: str) -> None:
         """Record a background analysis error message."""

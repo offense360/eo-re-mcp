@@ -1683,6 +1683,140 @@ class TestSpawnSeedsAnalyzedFlag:
 
 
 # ---------------------------------------------------------------------------
+# Analysis state tracking: one task whoever starts it (#5)
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisStateTracking:
+    """ "Analysis in progress" is one ``Worker._analysis_task`` regardless of
+    which path started it: the spawn chain, ``wait_for_analysis`` or an
+    explicit ``analyze_database`` call (#5)."""
+
+    @staticmethod
+    def _fake_client(open_result: types.CallToolResult) -> type:
+        class _FakeClient:
+            def __init__(self, transport):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def call_tool_mcp(self, name, args):
+                return open_result
+
+        return _FakeClient
+
+    @staticmethod
+    async def _spin(n: int = 5) -> None:
+        for _ in range(n):
+            await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_spawn_window_does_not_double_start(self):
+        """A wait_for_ready that lands between ``state = IDLE`` and
+        ``_ready_event.set()`` must not produce a second analysis task."""
+        pool = _setup_pool([])
+        worker = _add_worker(pool, "db1", {})
+        worker.state = WorkerState.STARTING
+        calls: list[str] = []
+        gate_log = asyncio.Event()
+        analyze_gate = asyncio.Event()
+
+        async def fake_session_log(session, level, msg):
+            # A real send_log_message yields to the loop; park here to hold
+            # the window open deterministically.
+            if "opened successfully" in msg:
+                await gate_log.wait()
+
+        async def fake_proxy(w, tool, args):
+            calls.append(tool)
+            if tool == "analyze_database":
+                await analyze_gate.wait()
+                return _ok_result({"status": "analysis_complete", "function_count": 99})
+            return _ok_result({"function_count": 99})
+
+        pool._worker_transport = lambda label="bootstrap": None
+        pool._spawn_death_watcher = lambda w: None
+        pool._session_log = fake_session_log
+        pool.proxy_to_worker = fake_proxy
+        open_result = _ok_result({"status": "ok", "pid": 1, "function_count": 3})
+
+        async def _spawn():
+            with patch("re_mcp.worker_provider.Client", self._fake_client(open_result)):
+                await pool._background_spawn(
+                    worker,
+                    "/tmp/db1",
+                    "/tmp/db1",
+                    "db1",
+                    run_auto_analysis=True,
+                    force_new=False,
+                    stale_worker=None,
+                    mcp_session=MagicMock(),
+                )
+
+        worker._spawn_task = asyncio.create_task(_spawn())
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if worker.state == WorkerState.IDLE:
+                break
+        assert worker.state == WorkerState.IDLE
+        assert not worker._ready_event.is_set()
+
+        waiter = asyncio.create_task(pool.wait_for_ready("db1"))
+        await self._spin()
+        task_in_window = worker._analysis_task
+
+        gate_log.set()
+        await self._spin()
+        task_after_spawn = worker._analysis_task
+        assert task_after_spawn is not None
+        assert task_in_window is None or task_in_window is task_after_spawn
+
+        analyze_gate.set()
+        await worker._spawn_task
+        result = await waiter
+
+        assert result["status"] == "ready"
+        assert calls.count("analyze_database") == 1
+        assert worker._analysis_task is task_after_spawn
+
+    @pytest.mark.asyncio
+    async def test_start_analysis_keeps_running_task(self):
+        w = Worker(database_id="db", file_path="/tmp/db")
+        first = w.start_analysis(asyncio.sleep(3600))
+        second = w.start_analysis(asyncio.sleep(3600))
+        try:
+            assert w._analysis_task is first
+            assert second is first
+            assert not first.cancelled()
+        finally:
+            for t in (first, second, w._analysis_task):
+                if isinstance(t, asyncio.Task) and not t.done():
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await t
+            await w.cancel_analysis()
+
+    @pytest.mark.asyncio
+    async def test_opening_follows_ready_event(self):
+        """With a spawn in flight, ``opening`` tracks the ready event, not ``state``."""
+        w = Worker(database_id="db", file_path="/tmp/db")
+        w._spawn_task = asyncio.create_task(asyncio.sleep(3600))
+        try:
+            w.state = WorkerState.IDLE
+            assert w.opening is True
+            w._ready_event.set()
+            assert w.opening is False
+        finally:
+            w._spawn_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await w._spawn_task
+
+
+# ---------------------------------------------------------------------------
 # resolve_worker with STARTING state
 # ---------------------------------------------------------------------------
 
