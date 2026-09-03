@@ -16,6 +16,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -114,12 +115,10 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Set comment")
         try:
-            cu.setComment(ct, comment or None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Set comment"):
+                cu.setComment(ct, comment or None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set comment: {e}", error_type="CommentFailed") from e
 
         return SetCommentResult(
@@ -152,12 +151,10 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Set decompiler comment")
         try:
-            cu.setComment(CodeUnit.PRE_COMMENT, comment or None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Set decompiler comment"):
+                cu.setComment(CodeUnit.PRE_COMMENT, comment or None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set comment: {e}", error_type="CommentFailed") from e
 
         return SetCommentResult(
@@ -193,15 +190,13 @@ def register(mcp: FastMCP) -> None:
 
         func = resolve_function(address)
 
-        tx_id = session.program.startTransaction("Set function comment")
         try:
-            if repeatable:
-                func.setRepeatableComment(comment or None)
-            else:
-                func.setComment(comment or None)
-            session.program.endTransaction(tx_id, True)
+            with transaction(session.program, "Set function comment"):
+                if repeatable:
+                    func.setRepeatableComment(comment or None)
+                else:
+                    func.setComment(comment or None)
         except Exception as e:
-            session.program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to set function comment: {e}", error_type="CommentFailed"
             ) from e

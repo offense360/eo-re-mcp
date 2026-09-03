@@ -16,6 +16,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -112,12 +113,10 @@ def register(mcp: FastMCP) -> None:
         to = resolve_address(to_address)
         rt = _get_ref_type(xref_type, _CODE_XREF_TYPES)
 
-        tx_id = program.startTransaction("Add code xref")
         try:
-            ref_mgr.addMemoryReference(frm, to, rt, SourceType.USER_DEFINED, 0)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Add code xref"):
+                ref_mgr.addMemoryReference(frm, to, rt, SourceType.USER_DEFINED, 0)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to add code xref: {e}", error_type="AddXrefFailed") from e
 
         return XrefManipResult(
@@ -151,12 +150,10 @@ def register(mcp: FastMCP) -> None:
         to = resolve_address(to_address)
         rt = _get_ref_type(xref_type, _DATA_XREF_TYPES)
 
-        tx_id = program.startTransaction("Add data xref")
         try:
-            ref_mgr.addMemoryReference(frm, to, rt, SourceType.USER_DEFINED, 0)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Add data xref"):
+                ref_mgr.addMemoryReference(frm, to, rt, SourceType.USER_DEFINED, 0)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to add data xref: {e}", error_type="AddXrefFailed") from e
 
         return XrefManipResult(
@@ -199,12 +196,10 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Delete code xref")
         try:
-            ref_mgr.delete(found)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete code xref"):
+                ref_mgr.delete(found)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to delete code xref: {e}", error_type="DeleteXrefFailed"
             ) from e
@@ -245,12 +240,10 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Delete data xref")
         try:
-            ref_mgr.delete(found)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete data xref"):
+                ref_mgr.delete(found)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to delete data xref: {e}", error_type="DeleteXrefFailed"
             ) from e

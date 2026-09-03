@@ -24,6 +24,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -129,36 +130,32 @@ def register(mcp: FastMCP) -> None:
             except Exception:
                 pass  # Property not set
 
-        tx_id = program.startTransaction("Set color")
         try:
-            if addresses is not None:
-                # Apply to all code units in the function body
-                cu_iter = listing.getCodeUnits(addresses, True)
-                while cu_iter.hasNext():
-                    unit = cu_iter.next()
+            with transaction(program, "Set color"):
+                if addresses is not None:
+                    # Apply to all code units in the function body
+                    cu_iter = listing.getCodeUnits(addresses, True)
+                    while cu_iter.hasNext():
+                        unit = cu_iter.next()
+                        if new_color is not None:
+                            unit.setProperty(_COLOR_PROPERTY, new_color)
+                        else:
+                            with contextlib.suppress(Exception):
+                                unit.removeProperty(_COLOR_PROPERTY)
+                else:
+                    if cu is None:
+                        raise GhidraError(
+                            f"No code unit at {format_address(addr.getOffset())}",
+                            error_type="NotFound",
+                        )
                     if new_color is not None:
-                        unit.setProperty(_COLOR_PROPERTY, new_color)
+                        cu.setProperty(_COLOR_PROPERTY, new_color)
                     else:
                         with contextlib.suppress(Exception):
-                            unit.removeProperty(_COLOR_PROPERTY)
-            else:
-                if cu is None:
-                    raise GhidraError(
-                        f"No code unit at {format_address(addr.getOffset())}",
-                        error_type="NotFound",
-                    )
-                if new_color is not None:
-                    cu.setProperty(_COLOR_PROPERTY, new_color)
-                else:
-                    with contextlib.suppress(Exception):
-                        cu.removeProperty(_COLOR_PROPERTY)
-
-            program.endTransaction(tx_id, True)
+                            cu.removeProperty(_COLOR_PROPERTY)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set color: {e}", error_type="SetColorFailed") from e
 
         return SetColorResult(

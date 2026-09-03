@@ -18,6 +18,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     read_memory,
     resolve_address,
+    transaction,
     write_memory,
 )
 from re_mcp_ghidra.session import session
@@ -122,11 +123,10 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         addr = resolve_address(address)
 
-        tx_id = program.startTransaction("Create function")
         try:
-            cmd = CreateFunctionCmd(addr)
-            success = cmd.applyTo(program)
-            program.endTransaction(tx_id, success)
+            with transaction(program, "Create function"):
+                cmd = CreateFunctionCmd(addr)
+                success = cmd.applyTo(program)
             if not success:
                 raise GhidraError(
                     f"Failed to create function at {format_address(addr.getOffset())}",
@@ -135,7 +135,6 @@ def register(mcp: FastMCP) -> None:
         except GhidraError:
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to create function: {e}", error_type="CreateFailed") from e
 
         func = program.getFunctionManager().getFunctionAt(addr)
@@ -179,11 +178,10 @@ def register(mcp: FastMCP) -> None:
 
         addr_set = AddressSet(addr, addr)
 
-        tx_id = program.startTransaction("Disassemble at address")
         try:
-            cmd = DisassembleCommand(addr_set, addr_set)
-            success = cmd.applyTo(program, TaskMonitor.DUMMY)
-            program.endTransaction(tx_id, success)
+            with transaction(program, "Disassemble at address"):
+                cmd = DisassembleCommand(addr_set, addr_set)
+                success = cmd.applyTo(program, TaskMonitor.DUMMY)
             if not success:
                 raise GhidraError(
                     f"Failed to disassemble at {format_address(addr.getOffset())}",
@@ -192,7 +190,6 @@ def register(mcp: FastMCP) -> None:
         except GhidraError:
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to disassemble: {e}", error_type="CreateFailed") from e
 
         # Get the resulting instruction size
@@ -223,12 +220,10 @@ def register(mcp: FastMCP) -> None:
         addr = resolve_address(address)
         end_addr = addr.add(size - 1)
 
-        tx_id = program.startTransaction("Undefine bytes")
         try:
-            listing.clearCodeUnits(addr, end_addr, False)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Undefine bytes"):
+                listing.clearCodeUnits(addr, end_addr, False)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to undefine {size} bytes at {format_address(addr.getOffset())}",
                 error_type="UndefineFailed",

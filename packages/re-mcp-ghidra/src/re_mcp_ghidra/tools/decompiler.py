@@ -16,6 +16,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_function,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -213,17 +214,15 @@ def register(mcp: FastMCP) -> None:
                     error_type="NotFound",
                 )
 
-            tx_id = program.startTransaction("Rename decompiler variable")
             try:
-                HighFunctionDBUtil.updateDBVariable(
-                    target_sym,
-                    new_name,
-                    None,  # keep existing type
-                    SourceType.USER_DEFINED,
-                )
-                program.endTransaction(tx_id, True)
+                with transaction(program, "Rename decompiler variable"):
+                    HighFunctionDBUtil.updateDBVariable(
+                        target_sym,
+                        new_name,
+                        None,  # keep existing type
+                        SourceType.USER_DEFINED,
+                    )
             except Exception as e:
-                program.endTransaction(tx_id, False)
                 raise GhidraError(
                     f"Failed to rename variable: {e}", error_type="RenameFailed"
                 ) from e
@@ -298,17 +297,15 @@ def register(mcp: FastMCP) -> None:
             high_var = target_sym.getHighVariable()
             old_type = str(high_var.getDataType()) if high_var else "undefined"
 
-            tx_id = program.startTransaction("Retype decompiler variable")
             try:
-                HighFunctionDBUtil.updateDBVariable(
-                    target_sym,
-                    None,  # keep existing name
-                    new_dt,
-                    SourceType.USER_DEFINED,
-                )
-                program.endTransaction(tx_id, True)
+                with transaction(program, "Retype decompiler variable"):
+                    HighFunctionDBUtil.updateDBVariable(
+                        target_sym,
+                        None,  # keep existing name
+                        new_dt,
+                        SourceType.USER_DEFINED,
+                    )
             except Exception as e:
-                program.endTransaction(tx_id, False)
                 raise GhidraError(
                     f"Failed to retype variable: {e}", error_type="RetypeFailed"
                 ) from e

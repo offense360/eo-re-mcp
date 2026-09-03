@@ -18,6 +18,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     resolve_address,
     resolve_function,
+    transaction,
 )
 from re_mcp_ghidra.models import FunctionChunk
 from re_mcp_ghidra.session import session
@@ -117,19 +118,16 @@ def register(mcp: FastMCP) -> None:
         last_addr = start_addr.getNewAddress(end_offset - 1)
 
         program = session.program
-        tx_id = program.startTransaction("Append function tail")
         try:
-            # Build new body = existing body + new range
-            current_body = func.getBody()
-            new_body = AddressSet(current_body)
-            new_body.addRange(start_addr, last_addr)
-            func.setBody(new_body)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Append function tail"):
+                # Build new body = existing body + new range
+                current_body = func.getBody()
+                new_body = AddressSet(current_body)
+                new_body.addRange(start_addr, last_addr)
+                func.setBody(new_body)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to append tail [{format_address(start_addr.getOffset())}, "
                 f"{format_address(end_addr.getOffset())}) to function at "
@@ -192,17 +190,14 @@ def register(mcp: FastMCP) -> None:
         range_start = target_range.getMinAddress()
         range_end_exclusive = target_range.getMaxAddress().getOffset() + 1
 
-        tx_id = program.startTransaction("Remove function tail")
         try:
-            new_body = AddressSet(body)
-            new_body.deleteRange(target_range.getMinAddress(), target_range.getMaxAddress())
-            func.setBody(new_body)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Remove function tail"):
+                new_body = AddressSet(body)
+                new_body.deleteRange(target_range.getMinAddress(), target_range.getMaxAddress())
+                func.setBody(new_body)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to remove tail at {format_address(tail_addr.getOffset())} "
                 f"from function at {format_address(entry.getOffset())}: {e}",

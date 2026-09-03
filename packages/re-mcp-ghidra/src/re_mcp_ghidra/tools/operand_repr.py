@@ -17,6 +17,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -81,42 +82,37 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Set operand format")
         try:
-            if isinstance(cu, Data):
-                cu.setLong("format", _DATA_FORMAT_VALUES[display_format])
-            elif isinstance(cu, Instruction):
-                # Instructions use equates to change operand display format
-                from ghidra.app.cmd.equate import SetEquateCmd  # noqa: PLC0415
+            with transaction(program, "Set operand format"):
+                if isinstance(cu, Data):
+                    cu.setLong("format", _DATA_FORMAT_VALUES[display_format])
+                elif isinstance(cu, Instruction):
+                    # Instructions use equates to change operand display format
+                    from ghidra.app.cmd.equate import SetEquateCmd  # noqa: PLC0415
 
-                scalar = cu.getScalar(operand_num)
-                if scalar is None:
-                    program.endTransaction(tx_id, False)
+                    scalar = cu.getScalar(operand_num)
+                    if scalar is None:
+                        raise GhidraError(
+                            f"Operand {operand_num} at {format_address(addr.getOffset())} "
+                            "has no scalar value",
+                            error_type="InvalidArgument",
+                        )
+
+                    equate_name = _format_scalar(scalar.getUnsignedValue(), display_format)
+                    cmd = SetEquateCmd(equate_name, addr, operand_num, scalar.getValue())
+                    if not cmd.applyTo(program):
+                        raise GhidraError(
+                            f"Failed to set equate: {cmd.getStatusMsg()}",
+                            error_type="SetOperandFailed",
+                        )
+                else:
                     raise GhidraError(
-                        f"Operand {operand_num} at {format_address(addr.getOffset())} "
-                        "has no scalar value",
+                        f"Unsupported code unit type at {format_address(addr.getOffset())}",
                         error_type="InvalidArgument",
                     )
-
-                equate_name = _format_scalar(scalar.getUnsignedValue(), display_format)
-                cmd = SetEquateCmd(equate_name, addr, operand_num, scalar.getValue())
-                if not cmd.applyTo(program):
-                    program.endTransaction(tx_id, False)
-                    raise GhidraError(
-                        f"Failed to set equate: {cmd.getStatusMsg()}",
-                        error_type="SetOperandFailed",
-                    )
-            else:
-                program.endTransaction(tx_id, False)
-                raise GhidraError(
-                    f"Unsupported code unit type at {format_address(addr.getOffset())}",
-                    error_type="InvalidArgument",
-                )
-            program.endTransaction(tx_id, True)
         except GhidraError:
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to set operand format: {e}", error_type="SetOperandFailed"
             ) from e

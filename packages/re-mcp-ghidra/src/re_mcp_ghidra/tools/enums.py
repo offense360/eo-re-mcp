@@ -19,6 +19,7 @@ from re_mcp_ghidra.helpers import (
     Offset,
     paginate,
     paginate_iter,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -156,13 +157,11 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         dtm = program.getDataTypeManager()
 
-        tx_id = program.startTransaction("Create enum")
         try:
-            enum_dt = EnumDataType(CategoryPath.ROOT, name, 4)
-            dtm.addDataType(enum_dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Create enum"):
+                enum_dt = EnumDataType(CategoryPath.ROOT, name, 4)
+                dtm.addDataType(enum_dt, None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to create enum: {e}", error_type="CreateFailed") from e
 
         return CreateEnumResult(name=name, bitfield=bitfield, status="created")
@@ -181,12 +180,10 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         dtm = program.getDataTypeManager()
 
-        tx_id = program.startTransaction("Delete enum")
         try:
-            dtm.remove(enum_dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete enum"):
+                dtm.remove(enum_dt, None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete enum: {e}", error_type="DeleteFailed") from e
 
         return DeleteEnumResult(name=name, old_member_count=old_member_count, status="deleted")
@@ -204,12 +201,10 @@ def register(mcp: FastMCP) -> None:
         enum_dt = _resolve_enum(enum_name)
 
         program = session.program
-        tx_id = program.startTransaction("Add enum member")
         try:
-            enum_dt.add(member_name, value)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Add enum member"):
+                enum_dt.add(member_name, value)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to add enum member: {e}", error_type="AddMemberFailed"
             ) from e
@@ -251,12 +246,10 @@ def register(mcp: FastMCP) -> None:
         enum_dt = _resolve_enum(old_name)
 
         program = session.program
-        tx_id = program.startTransaction("Rename enum")
         try:
-            enum_dt.setName(new_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename enum"):
+                enum_dt.setName(new_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to rename enum {old_name!r} to {new_name!r}",
                 error_type="RenameFailed",
@@ -280,12 +273,10 @@ def register(mcp: FastMCP) -> None:
             raise GhidraError(f"No member with value {value} in {enum_name}", error_type="NotFound")
 
         program = session.program
-        tx_id = program.startTransaction("Delete enum member")
         try:
-            enum_dt.remove(member_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete enum member"):
+                enum_dt.remove(member_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to delete enum member: {e}", error_type="DeleteFailed"
             ) from e
@@ -311,14 +302,12 @@ def register(mcp: FastMCP) -> None:
             raise GhidraError(f"No member with value {value} in {enum_name}", error_type="NotFound")
 
         program = session.program
-        tx_id = program.startTransaction("Rename enum member")
         try:
-            # Ghidra EnumDataType: remove old by name, add with new name
-            enum_dt.remove(old_name)
-            enum_dt.add(new_name, value)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename enum member"):
+                # Ghidra EnumDataType: remove old by name, add with new name
+                enum_dt.remove(old_name)
+                enum_dt.add(new_name, value)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to rename enum member: {e}", error_type="RenameFailed"
             ) from e

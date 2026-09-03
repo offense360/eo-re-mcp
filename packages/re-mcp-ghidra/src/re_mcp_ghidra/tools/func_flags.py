@@ -17,6 +17,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     resolve_address,
     resolve_function,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -92,51 +93,47 @@ def register(mcp: FastMCP) -> None:
                 status="no_change",
             )
 
-        tx_id = program.startTransaction("Set function flags")
         try:
-            if "thunk" in changed:
-                if changed["thunk"]:
-                    # Setting as thunk requires a thunked function address.
-                    # If the function is not already a thunk, try to identify
-                    # the target from the function body (first call).
-                    if not func.isThunk():
-                        # Cannot blindly set thunk without a target; raise error
-                        raise GhidraError(
-                            "Cannot mark as thunk: no thunk target identified. "
-                            "Use Ghidra's auto-analysis or set the thunked function manually.",
-                            error_type="InvalidArgument",
-                        )
-                else:
-                    # Ghidra does not have a direct unsetThunk.
-                    # We skip this silently if it's not a thunk.
-                    pass
+            with transaction(program, "Set function flags"):
+                if "thunk" in changed:
+                    if changed["thunk"]:
+                        # Setting as thunk requires a thunked function address.
+                        # If the function is not already a thunk, try to identify
+                        # the target from the function body (first call).
+                        if not func.isThunk():
+                            # Cannot blindly set thunk without a target; raise error
+                            raise GhidraError(
+                                "Cannot mark as thunk: no thunk target identified. "
+                                "Use Ghidra's auto-analysis or set the thunked function manually.",
+                                error_type="InvalidArgument",
+                            )
+                    else:
+                        # Ghidra does not have a direct unsetThunk.
+                        # We skip this silently if it's not a thunk.
+                        pass
 
-            if "noreturn" in changed:
-                func.setNoReturn(changed["noreturn"])
+                if "noreturn" in changed:
+                    func.setNoReturn(changed["noreturn"])
 
-            if "inline" in changed:
-                func.setInline(changed["inline"])
+                if "inline" in changed:
+                    func.setInline(changed["inline"])
 
-            # Ghidra's Function class doesn't have a direct setLibrary flag.
-            # Library functions are typically identified by their source or
-            # namespace. We can tag the function with a tag instead.
-            if "library" in changed:
-                tag_mgr = program.getFunctionManager()
-                lib_tag_name = "LIBRARY"
-                if changed["library"]:
-                    tag = tag_mgr.getFunctionTag(lib_tag_name)
-                    if tag is None:
-                        tag = tag_mgr.createFunctionTag(lib_tag_name, "Library function")
-                    func.addTag(lib_tag_name)
-                else:
-                    func.removeTag(lib_tag_name)
-
-            program.endTransaction(tx_id, True)
+                # Ghidra's Function class doesn't have a direct setLibrary flag.
+                # Library functions are typically identified by their source or
+                # namespace. We can tag the function with a tag instead.
+                if "library" in changed:
+                    tag_mgr = program.getFunctionManager()
+                    lib_tag_name = "LIBRARY"
+                    if changed["library"]:
+                        tag = tag_mgr.getFunctionTag(lib_tag_name)
+                        if tag is None:
+                            tag = tag_mgr.createFunctionTag(lib_tag_name, "Library function")
+                        func.addTag(lib_tag_name)
+                    else:
+                        func.removeTag(lib_tag_name)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to update function flags: {e}", error_type="UpdateFailed"
             ) from e

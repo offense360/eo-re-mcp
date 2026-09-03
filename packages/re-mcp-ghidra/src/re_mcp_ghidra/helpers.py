@@ -220,19 +220,16 @@ def write_memory(program, addr, data: bytes, *, label: str = "Write bytes") -> N
     Clears existing code units in the target range before writing to avoid
     conflicts with existing instructions/data definitions.
 
-    Raises :class:`GhidraError` on failure (transaction is rolled back).
+    Raises :class:`GhidraError` on failure.
     """
     if not data:
         raise GhidraError("Cannot write empty data", error_type="InvalidArgument")
-    tx_id = program.startTransaction(label)
     try:
-        end_addr = addr.add(len(data) - 1)
-        program.getListing().clearCodeUnits(addr, end_addr, False)
-        program.getMemory().setBytes(addr, data)
-        program.endTransaction(tx_id, True)
+        with transaction(program, label):
+            end_addr = addr.add(len(data) - 1)
+            program.getListing().clearCodeUnits(addr, end_addr, False)
+            program.getMemory().setBytes(addr, data)
     except GhidraError:
-        program.endTransaction(tx_id, False)
         raise
     except Exception as e:
-        program.endTransaction(tx_id, False)
         raise GhidraError(f"Failed to write bytes: {e}", error_type="PatchFailed") from e

@@ -17,6 +17,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     format_permissions,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -122,18 +123,17 @@ def register(mcp: FastMCP) -> None:
         read, write, execute = _parse_permissions(permissions)
 
         memory = program.getMemory()
-        tx_id = program.startTransaction("Create memory block")
         try:
-            block = memory.createInitializedBlock(name, start, size, 0, TaskMonitor.DUMMY, False)
-            block.setRead(read)
-            block.setWrite(write)
-            block.setExecute(execute)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Create memory block"):
+                block = memory.createInitializedBlock(
+                    name, start, size, 0, TaskMonitor.DUMMY, False
+                )
+                block.setRead(read)
+                block.setWrite(write)
+                block.setExecute(execute)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to create memory block: {e}", error_type="CreateFailed"
             ) from e
@@ -168,12 +168,10 @@ def register(mcp: FastMCP) -> None:
         old_permissions = format_permissions(block.isRead(), block.isWrite(), block.isExecute())
 
         memory = program.getMemory()
-        tx_id = program.startTransaction("Delete memory block")
         try:
-            memory.removeBlock(block, TaskMonitor.DUMMY)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete memory block"):
+                memory.removeBlock(block, TaskMonitor.DUMMY)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to delete memory block: {e}", error_type="DeleteFailed"
             ) from e
@@ -204,12 +202,10 @@ def register(mcp: FastMCP) -> None:
 
         old_name = block.getName()
 
-        tx_id = program.startTransaction("Rename memory block")
         try:
-            block.setName(new_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename memory block"):
+                block.setName(new_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to rename memory block: {e}", error_type="RenameFailed"
             ) from e
@@ -235,14 +231,12 @@ def register(mcp: FastMCP) -> None:
         old_permissions = format_permissions(block.isRead(), block.isWrite(), block.isExecute())
         read, write, execute = _parse_permissions(permissions)
 
-        tx_id = program.startTransaction("Set memory block permissions")
         try:
-            block.setRead(read)
-            block.setWrite(write)
-            block.setExecute(execute)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Set memory block permissions"):
+                block.setRead(read)
+                block.setWrite(write)
+                block.setExecute(execute)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set permissions: {e}", error_type="UpdateFailed") from e
 
         return SetSegmentPermissionsResult(

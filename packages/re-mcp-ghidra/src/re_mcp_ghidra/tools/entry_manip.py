@@ -15,6 +15,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -61,24 +62,20 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         addr = resolve_address(address)
 
-        tx_id = program.startTransaction("Add entry point")
         try:
-            sym_table = program.getSymbolTable()
-            sym_table.addExternalEntryPoint(addr)
+            with transaction(program, "Add entry point"):
+                sym_table = program.getSymbolTable()
+                sym_table.addExternalEntryPoint(addr)
 
-            # Create or update a label at the entry point
-            existing_sym = sym_table.getPrimarySymbol(addr)
-            if existing_sym is not None:
-                existing_sym.setName(name, SourceType.USER_DEFINED)
-            else:
-                sym_table.createLabel(addr, name, SourceType.USER_DEFINED)
-
-            program.endTransaction(tx_id, True)
+                # Create or update a label at the entry point
+                existing_sym = sym_table.getPrimarySymbol(addr)
+                if existing_sym is not None:
+                    existing_sym.setName(name, SourceType.USER_DEFINED)
+                else:
+                    sym_table.createLabel(addr, name, SourceType.USER_DEFINED)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to add entry point: {e}", error_type="AddFailed") from e
 
         return AddEntryPointResult(
@@ -116,18 +113,15 @@ def register(mcp: FastMCP) -> None:
         existing_sym = sym_table.getPrimarySymbol(addr)
         old_name = existing_sym.getName() if existing_sym else format_address(addr.getOffset())
 
-        tx_id = program.startTransaction("Rename entry point")
         try:
-            if existing_sym is not None:
-                existing_sym.setName(name, SourceType.USER_DEFINED)
-            else:
-                sym_table.createLabel(addr, name, SourceType.USER_DEFINED)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename entry point"):
+                if existing_sym is not None:
+                    existing_sym.setName(name, SourceType.USER_DEFINED)
+                else:
+                    sym_table.createLabel(addr, name, SourceType.USER_DEFINED)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to rename entry point: {e}", error_type="RenameFailed"
             ) from e
