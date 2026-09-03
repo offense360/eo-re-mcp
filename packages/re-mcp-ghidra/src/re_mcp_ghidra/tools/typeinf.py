@@ -13,6 +13,7 @@ from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
     ANNO_DESTRUCTIVE,
     ANNO_READ_ONLY,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -161,12 +162,10 @@ def register(mcp: FastMCP) -> None:
 
         cat = dt.getCategoryPath()
 
-        tx_id = program.startTransaction("Delete local type")
         try:
-            dtm.remove(dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete local type"):
+                dtm.remove(dt, None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete type: {e}", error_type="DeleteFailed") from e
 
         return DeleteLocalTypeResult(

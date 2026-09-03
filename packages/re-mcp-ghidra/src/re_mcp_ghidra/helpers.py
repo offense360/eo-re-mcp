@@ -10,6 +10,7 @@ tool modules can import everything from a single place.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 from re_mcp.helpers import (
@@ -49,6 +50,7 @@ __all__ = [
     "Offset",
     "async_paginate_iter",
     "call_ghidra",
+    "check_range_in_memory",
     "compile_filter",
     "format_address",
     "format_permissions",
@@ -61,11 +63,39 @@ __all__ = [
     "resolve_function",
     "set_main_executor",
     "to_ghidra_address",
+    "transaction",
     "write_memory",
 ]
 
 # Backend dispatch alias
 call_ghidra = dispatch_to_main
+
+
+# ---------------------------------------------------------------------------
+# Transactions
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def transaction(program, label: str):
+    """Run a mutation inside a Ghidra transaction.
+
+    Always ends the transaction with ``commit=True``, even on error. Under
+    GhidraProject's long-lived batch transaction an aborted nested entry
+    marks the whole batch ABORTED and Ghidra rolls back every change since
+    the last save when it ends (#11). Callers must validate before mutating.
+    """
+    tx_id = program.startTransaction(label)
+    try:
+        yield
+    except Exception:
+        log.warning(
+            "Transaction %r failed; committing partial state to avoid batch rollback (#11)",
+            label,
+        )
+        raise
+    finally:
+        program.endTransaction(tx_id, True)
 
 
 # ---------------------------------------------------------------------------
@@ -185,25 +215,62 @@ def read_memory(memory, addr, size: int) -> bytes:
     return bytes(b & 0xFF for b in buf)
 
 
+def check_range_in_memory(program, addr, size: int, *, initialized: bool = False) -> None:
+    """Raise :class:`GhidraError` unless ``[addr, addr + size)`` is backed by memory blocks.
+
+    Mirrors the pre-flight walk ``MemoryMapDB.setBytes`` performs, so tools can
+    reject a bad range *before* they start mutating (clearing code units,
+    creating data, ...). With ``initialized=True`` every block in the range
+    must also be initialized, which is what a byte write requires.
+    """
+    if size <= 0:
+        raise GhidraError("size must be >= 1", error_type="InvalidArgument")
+    memory = program.getMemory()
+    try:
+        end_addr = addr.add(size - 1)
+    except Exception as e:
+        raise GhidraError(
+            f"Invalid range {format_address(addr.getOffset())} (+{size})",
+            error_type="InvalidArgument",
+        ) from e
+    cur = addr
+    while True:
+        block = memory.getBlock(cur)
+        if block is None:
+            raise GhidraError(
+                f"Address {format_address(cur.getOffset())} is not in memory "
+                f"(range {format_address(addr.getOffset())} +{size})",
+                error_type="NotFound",
+            )
+        if initialized and not block.isInitialized():
+            raise GhidraError(
+                f"Memory block {block.getName()} at {format_address(cur.getOffset())} "
+                "is uninitialized",
+                error_type="InvalidArgument",
+            )
+        if block.contains(end_addr):
+            return
+        cur = block.getEnd().add(1)
+
+
 def write_memory(program, addr, data: bytes, *, label: str = "Write bytes") -> None:
     """Write bytes to Ghidra memory within a transaction.
 
     Clears existing code units in the target range before writing to avoid
-    conflicts with existing instructions/data definitions.
+    conflicts with existing instructions/data definitions. The range is
+    validated first so a bad address fails before anything is cleared (#11).
 
-    Raises :class:`GhidraError` on failure (transaction is rolled back).
+    Raises :class:`GhidraError` on failure.
     """
     if not data:
         raise GhidraError("Cannot write empty data", error_type="InvalidArgument")
-    tx_id = program.startTransaction(label)
+    check_range_in_memory(program, addr, len(data), initialized=True)
     try:
-        end_addr = addr.add(len(data) - 1)
-        program.getListing().clearCodeUnits(addr, end_addr, False)
-        program.getMemory().setBytes(addr, data)
-        program.endTransaction(tx_id, True)
+        with transaction(program, label):
+            end_addr = addr.add(len(data) - 1)
+            program.getListing().clearCodeUnits(addr, end_addr, False)
+            program.getMemory().setBytes(addr, data)
     except GhidraError:
-        program.endTransaction(tx_id, False)
         raise
     except Exception as e:
-        program.endTransaction(tx_id, False)
         raise GhidraError(f"Failed to write bytes: {e}", error_type="PatchFailed") from e

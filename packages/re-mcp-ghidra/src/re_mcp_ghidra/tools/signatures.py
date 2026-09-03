@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
-from re_mcp_ghidra.helpers import ANNO_MUTATE, ANNO_READ_ONLY
+from re_mcp_ghidra.helpers import ANNO_MUTATE, ANNO_READ_ONLY, transaction
 from re_mcp_ghidra.session import session
 
 
@@ -76,12 +76,10 @@ def register(mcp: FastMCP) -> None:
                     error_type="NotAvailable",
                 )
 
-            tx_id = program.startTransaction("Apply Function ID")
             try:
-                fid_svc.processProgram(program, query_svc, 10.0, TaskMonitor.DUMMY)
-                program.endTransaction(tx_id, True)
+                with transaction(program, "Apply Function ID"):
+                    fid_svc.processProgram(program, query_svc, 10.0, TaskMonitor.DUMMY)
             except Exception as e:
-                program.endTransaction(tx_id, False)
                 raise GhidraError(
                     f"Function ID analysis failed: {e}",
                     error_type="AnalysisFailed",

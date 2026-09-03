@@ -21,6 +21,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_function,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -165,20 +166,17 @@ def register(mcp: FastMCP) -> None:
             )
 
         program = session.program
-        tx_id = program.startTransaction("Rename variable")
         try:
-            HighFunctionDBUtil.updateDBVariable(
-                target_sym,
-                new_name,
-                None,
-                SourceType.USER_DEFINED,
-            )
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename variable"):
+                HighFunctionDBUtil.updateDBVariable(
+                    target_sym,
+                    new_name,
+                    None,
+                    SourceType.USER_DEFINED,
+                )
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to rename variable: {e}", error_type="RenameFailed") from e
 
         return RenameRegvarResult(

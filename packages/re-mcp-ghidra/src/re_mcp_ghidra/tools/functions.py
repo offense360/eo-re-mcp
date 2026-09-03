@@ -21,6 +21,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     paginate_iter,
     resolve_function,
+    transaction,
 )
 from re_mcp_ghidra.models import FunctionSummary, RenameResult
 from re_mcp_ghidra.session import session
@@ -209,12 +210,10 @@ def register(mcp: FastMCP) -> None:
         func = resolve_function(address)
         old_name = func.getName()
 
-        tx_id = session.program.startTransaction("Rename function")
         try:
-            func.setName(new_name, SourceType.USER_DEFINED)
-            session.program.endTransaction(tx_id, True)
+            with transaction(session.program, "Rename function"):
+                func.setName(new_name, SourceType.USER_DEFINED)
         except Exception as e:
-            session.program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to rename function: {e}", error_type="RenameFailed") from e
 
         return RenameResult(
@@ -231,16 +230,14 @@ def register(mcp: FastMCP) -> None:
         name = func.getName()
         entry = func.getEntryPoint()
 
-        tx_id = session.program.startTransaction("Delete function")
         try:
-            success = session.program.getFunctionManager().removeFunction(entry)
-            session.program.endTransaction(tx_id, success)
+            with transaction(session.program, "Delete function"):
+                success = session.program.getFunctionManager().removeFunction(entry)
             if not success:
                 raise GhidraError("Failed to delete function", error_type="DeleteFailed")
         except GhidraError:
             raise
         except Exception as e:
-            session.program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete function: {e}", error_type="DeleteFailed") from e
 
         return DeleteFunctionResult(

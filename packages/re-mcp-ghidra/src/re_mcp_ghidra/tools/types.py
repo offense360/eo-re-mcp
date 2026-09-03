@@ -17,10 +17,12 @@ from re_mcp_ghidra.helpers import (
     FilterPattern,
     Limit,
     Offset,
+    check_range_in_memory,
     compile_filter,
     format_address,
     paginate_iter,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -107,14 +109,14 @@ def register(mcp: FastMCP) -> None:
         addr = resolve_address(address)
 
         dt = _parse_data_type(type_string)
+        if dt.getLength() > 0:
+            check_range_in_memory(program, addr, dt.getLength())
 
-        tx_id = program.startTransaction("Set type")
         try:
-            listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
-            listing.createData(addr, dt)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Set type"):
+                listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
+                listing.createData(addr, dt)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set type: {e}", error_type="SetTypeFailed") from e
 
         return SetTypeResult(
@@ -185,18 +187,16 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         dtm = program.getDataTypeManager()
 
-        tx_id = program.startTransaction("Parse type declaration")
         try:
-            parser = CParser(dtm)
-            dt = parser.parse(declaration)
-            if dt is None:
-                program.endTransaction(tx_id, False)
-                raise GhidraError(
-                    f"Failed to parse declaration: {declaration!r}",
-                    error_type="ParseError",
-                )
-            dtm.addDataType(dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Parse type declaration"):
+                parser = CParser(dtm)
+                dt = parser.parse(declaration)
+                if dt is None:
+                    raise GhidraError(
+                        f"Failed to parse declaration: {declaration!r}",
+                        error_type="ParseError",
+                    )
+                dtm.addDataType(dt, None)
 
             kind = "other"
             from ghidra.program.model.data import Enum, Structure, Union  # noqa: PLC0415
@@ -217,7 +217,6 @@ def register(mcp: FastMCP) -> None:
         except GhidraError:
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to parse declaration: {e}", error_type="ParseError") from e
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
@@ -249,13 +248,14 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Apply type at address")
+        if dt.getLength() > 0:
+            check_range_in_memory(program, addr, dt.getLength())
+
         try:
-            listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
-            listing.createData(addr, dt)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Apply type at address"):
+                listing.clearCodeUnits(addr, addr.add(dt.getLength() - 1), False)
+                listing.createData(addr, dt)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to apply type: {e}", error_type="ApplyTypeFailed") from e
 
         return ApplyTypeResult(

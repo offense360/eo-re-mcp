@@ -20,6 +20,7 @@ from re_mcp_ghidra.helpers import (
     Offset,
     compile_filter,
     paginate_iter,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -201,16 +202,14 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         dtm = program.getDataTypeManager()
 
-        tx_id = program.startTransaction("Create structure")
         try:
-            if is_union:
-                dt = UnionDataType(CategoryPath.ROOT, name)
-            else:
-                dt = StructureDataType(CategoryPath.ROOT, name, size)
-            dtm.addDataType(dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Create structure"):
+                if is_union:
+                    dt = UnionDataType(CategoryPath.ROOT, name)
+                else:
+                    dt = StructureDataType(CategoryPath.ROOT, name, size)
+                dtm.addDataType(dt, None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to create structure: {e}", error_type="CreateFailed") from e
 
         return CreateStructResult(
@@ -243,19 +242,17 @@ def register(mcp: FastMCP) -> None:
 
         member_dt = _parse_data_type(member_type)
 
-        tx_id = program.startTransaction("Add struct member")
         try:
-            if offset < 0:
-                dt.add(member_dt, size or member_dt.getLength(), member_name, None)
-                actual_offset = dt.getLength() - (size or member_dt.getLength())
-            else:
-                dt.replaceAtOffset(
-                    offset, member_dt, size or member_dt.getLength(), member_name, None
-                )
-                actual_offset = offset
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Add struct member"):
+                if offset < 0:
+                    dt.add(member_dt, size or member_dt.getLength(), member_name, None)
+                    actual_offset = dt.getLength() - (size or member_dt.getLength())
+                else:
+                    dt.replaceAtOffset(
+                        offset, member_dt, size or member_dt.getLength(), member_name, None
+                    )
+                    actual_offset = offset
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to add member: {e}", error_type="AddMemberFailed") from e
 
         return AddStructMemberResult(
@@ -281,12 +278,10 @@ def register(mcp: FastMCP) -> None:
         old_type = str(member.getDataType().getName())
         new_dt = _parse_data_type(new_type)
 
-        tx_id = program.startTransaction("Retype struct member")
         try:
-            member.setDataType(new_dt)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Retype struct member"):
+                member.setDataType(new_dt)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to retype member: {e}", error_type="RetypeFailed") from e
 
         return RetypeStructMemberResult(
@@ -316,12 +311,10 @@ def register(mcp: FastMCP) -> None:
 
         _, member = _find_member(dt, old_name)
 
-        tx_id = program.startTransaction("Rename struct member")
         try:
-            member.setFieldName(new_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename struct member"):
+                member.setFieldName(new_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to rename member: {e}", error_type="RenameFailed") from e
 
         return RenameStructMemberResult(
@@ -350,15 +343,13 @@ def register(mcp: FastMCP) -> None:
         member_idx, comp = _find_member(dt, member_name)
         member_size = comp.getLength()
 
-        tx_id = program.startTransaction("Delete struct member")
         try:
-            if isinstance(dt, Union):
-                dt.delete(member_idx)
-            else:
-                dt.clearComponent(member_idx)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete struct member"):
+                if isinstance(dt, Union):
+                    dt.delete(member_idx)
+                else:
+                    dt.clearComponent(member_idx)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete member: {e}", error_type="DeleteFailed") from e
 
         return DeleteStructMemberResult(
@@ -382,12 +373,10 @@ def register(mcp: FastMCP) -> None:
         old_size = dt.getLength()
         old_member_count = dt.getNumComponents()
 
-        tx_id = program.startTransaction("Delete structure")
         try:
-            dtm.remove(dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete structure"):
+                dtm.remove(dt, None)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete structure: {e}", error_type="DeleteFailed") from e
 
         return DeleteStructureResult(

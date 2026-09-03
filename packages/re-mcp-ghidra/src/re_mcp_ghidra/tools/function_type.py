@@ -16,6 +16,7 @@ from re_mcp_ghidra.helpers import (
     Address,
     format_address,
     resolve_function,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -139,50 +140,45 @@ def register(mcp: FastMCP) -> None:
         if not decl.endswith(";"):
             decl += ";"
 
-        tx_id = program.startTransaction("Set function type")
+        from ghidra.program.model.listing import ParameterImpl  # noqa: PLC0415
+        from ghidra.program.model.listing.Function import FunctionUpdateType  # noqa: PLC0415
+        from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
+        from java.util import ArrayList  # noqa: PLC0415
+
         try:
-            parsed_dt = parser.parse(decl)
+            with transaction(program, "Set function type"):
+                parsed_dt = parser.parse(decl)
 
-            if not isinstance(parsed_dt, FunctionDefinitionDataType):
-                raise GhidraError(
-                    f"Parsed type is not a function definition: {type_string!r}",
-                    error_type="InvalidArgument",
-                )
-
-            # Apply the parsed function definition to the function
-            from ghidra.program.model.listing.Function import FunctionUpdateType  # noqa: PLC0415
-            from ghidra.program.model.symbol import SourceType  # noqa: PLC0415
-
-            ret_type = parsed_dt.getReturnType()
-            func.setReturnType(ret_type, SourceType.USER_DEFINED)
-
-            # Apply parameters
-            from ghidra.program.model.listing import ParameterImpl  # noqa: PLC0415
-            from java.util import ArrayList  # noqa: PLC0415
-
-            java_params = ArrayList()
-            for arg in parsed_dt.getArguments():
-                java_params.add(
-                    ParameterImpl(
-                        arg.getName() or "",
-                        arg.getDataType(),
-                        program,
+                if not isinstance(parsed_dt, FunctionDefinitionDataType):
+                    raise GhidraError(
+                        f"Parsed type is not a function definition: {type_string!r}",
+                        error_type="InvalidArgument",
                     )
+
+                # Build the parameter list first: ParameterImpl validates names,
+                # so a bad declaration fails before the function is touched.
+                java_params = ArrayList()
+                for arg in parsed_dt.getArguments():
+                    java_params.add(
+                        ParameterImpl(
+                            arg.getName() or "",
+                            arg.getDataType(),
+                            program,
+                        )
+                    )
+
+                # Apply parameters before the return type: replaceParameters is
+                # the step that can still fail, setReturnType effectively cannot.
+                func.replaceParameters(
+                    java_params,
+                    FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS,
+                    True,
+                    SourceType.USER_DEFINED,
                 )
-
-            func.replaceParameters(
-                java_params,
-                FunctionUpdateType.DYNAMIC_STORAGE_ALL_PARAMS,
-                True,
-                SourceType.USER_DEFINED,
-            )
-
-            program.endTransaction(tx_id, True)
+                func.setReturnType(parsed_dt.getReturnType(), SourceType.USER_DEFINED)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to set function type: {e}", error_type="SetTypeFailed"
             ) from e
@@ -216,12 +212,10 @@ def register(mcp: FastMCP) -> None:
 
         old_convention = func.getCallingConventionName() or ""
 
-        tx_id = program.startTransaction("Set calling convention")
         try:
-            func.setCallingConvention(convention)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Set calling convention"):
+                func.setCallingConvention(convention)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to set calling convention {convention!r}: {e}",
                 error_type="SetConventionFailed",

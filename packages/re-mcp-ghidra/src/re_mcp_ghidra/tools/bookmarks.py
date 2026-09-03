@@ -20,6 +20,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     paginate_iter,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -73,12 +74,10 @@ def register(mcp: FastMCP) -> None:
         addr = resolve_address(address)
         bm_mgr = program.getBookmarkManager()
 
-        tx_id = program.startTransaction("Set bookmark")
         try:
-            bm_mgr.setBookmark(addr, "Note", category, description)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Set bookmark"):
+                bm_mgr.setBookmark(addr, "Note", category, description)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to set bookmark: {e}", error_type="BookmarkFailed") from e
 
         return SetBookmarkResult(
@@ -145,13 +144,11 @@ def register(mcp: FastMCP) -> None:
                 error_type="NotFound",
             )
 
-        tx_id = program.startTransaction("Delete bookmark")
         try:
-            for bm in bookmarks:
-                bm_mgr.removeBookmark(bm)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete bookmark"):
+                for bm in bookmarks:
+                    bm_mgr.removeBookmark(bm)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete bookmark: {e}", error_type="BookmarkFailed") from e
 
         return DeleteBookmarkResult(

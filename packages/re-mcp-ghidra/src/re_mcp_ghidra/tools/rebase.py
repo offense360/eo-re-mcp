@@ -14,6 +14,7 @@ from re_mcp_ghidra.helpers import (
     ANNO_DESTRUCTIVE,
     format_address,
     parse_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -52,12 +53,10 @@ def register(mcp: FastMCP) -> None:
         addr_factory = program.getAddressFactory()
         new_base = addr_factory.getDefaultAddressSpace().getAddress(new_offset)
 
-        tx_id = program.startTransaction("Rebase program")
         try:
-            program.setImageBase(new_base, True)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rebase program"):
+                program.setImageBase(new_base, True)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to rebase program: {e}", error_type="RebaseFailed") from e
 
         delta_str = (

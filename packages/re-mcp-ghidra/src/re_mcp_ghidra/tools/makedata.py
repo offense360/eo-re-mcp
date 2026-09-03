@@ -15,8 +15,10 @@ from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
     ANNO_MUTATE,
     Address,
+    check_range_in_memory,
     format_address,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -119,24 +121,21 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         listing = program.getListing()
         addr = resolve_address(address)
+        check_range_in_memory(program, addr, elem_size * count)
 
-        tx_id = program.startTransaction("Make data")
         try:
-            # Clear existing data first
-            listing.clearCodeUnits(addr, addr.add(elem_size * count - 1), False)
+            with transaction(program, "Make data"):
+                # Clear existing data first
+                listing.clearCodeUnits(addr, addr.add(elem_size * count - 1), False)
 
-            if count > 1:
-                arr_dt = ArrayDataType(dt, count, elem_size)
-                listing.createData(addr, arr_dt)
-            else:
-                listing.createData(addr, dt)
-
-            program.endTransaction(tx_id, True)
+                if count > 1:
+                    arr_dt = ArrayDataType(dt, count, elem_size)
+                    listing.createData(addr, arr_dt)
+                else:
+                    listing.createData(addr, dt)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to define {data_type} at {format_address(addr.getOffset())}: {e}",
                 error_type="MakeDataFailed",
@@ -187,29 +186,26 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         listing = program.getListing()
         addr = resolve_address(address)
+        check_range_in_memory(program, addr, max(length, 1))
 
-        tx_id = program.startTransaction("Make string")
         try:
-            if length > 0:
-                listing.clearCodeUnits(addr, addr.add(length - 1), False)
-                # For fixed-length strings, use plain StringDataType with explicit length
-                listing.createData(addr, StringDataType.dataType, length)
-            else:
-                # Auto-detect length by clearing a reasonable area and using terminated type
-                # Clear conservatively -- 1 byte at minimum for the terminated type to probe
-                listing.clearCodeUnits(addr, addr, False)
-                listing.createData(addr, dt)
+            with transaction(program, "Make string"):
+                if length > 0:
+                    listing.clearCodeUnits(addr, addr.add(length - 1), False)
+                    # For fixed-length strings, use plain StringDataType with explicit length
+                    listing.createData(addr, StringDataType.dataType, length)
+                else:
+                    # Auto-detect length by clearing a reasonable area and using terminated type
+                    # Clear conservatively -- 1 byte at minimum for the terminated type to probe
+                    listing.clearCodeUnits(addr, addr, False)
+                    listing.createData(addr, dt)
 
-            # Read back the actual length
-            created = listing.getDataAt(addr)
-            actual_length = created.getLength() if created else length
-
-            program.endTransaction(tx_id, True)
+                # Read back the actual length
+                created = listing.getDataAt(addr)
+                actual_length = created.getLength() if created else length
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to define string at {format_address(addr.getOffset())}: {e}",
                 error_type="MakeDataFailed",
@@ -263,18 +259,16 @@ def register(mcp: FastMCP) -> None:
         listing = program.getListing()
         addr = resolve_address(address)
         total_size = element_size * count
+        check_range_in_memory(program, addr, total_size)
 
-        tx_id = program.startTransaction("Make array")
         try:
-            listing.clearCodeUnits(addr, addr.add(total_size - 1), False)
-            arr_dt = ArrayDataType(elem_dt, count, element_size)
-            listing.createData(addr, arr_dt)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Make array"):
+                listing.clearCodeUnits(addr, addr.add(total_size - 1), False)
+                arr_dt = ArrayDataType(elem_dt, count, element_size)
+                listing.createData(addr, arr_dt)
         except GhidraError:
-            program.endTransaction(tx_id, False)
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(
                 f"Failed to create array at {format_address(addr.getOffset())}: {e}",
                 error_type="MakeDataFailed",

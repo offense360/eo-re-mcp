@@ -10,7 +10,7 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
-from re_mcp_ghidra.helpers import ANNO_MUTATE
+from re_mcp_ghidra.helpers import ANNO_MUTATE, transaction
 from re_mcp_ghidra.session import session
 
 
@@ -61,18 +61,16 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         dtm = program.getDataTypeManager()
 
-        tx_id = program.startTransaction("Parse source declarations")
         try:
-            parser = CParser(dtm)
-            dt = parser.parse(source)
-            if dt is None:
-                program.endTransaction(tx_id, False)
-                raise GhidraError(
-                    f"Failed to parse source: {source!r}",
-                    error_type="ParseError",
-                )
-            dtm.addDataType(dt, None)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Parse source declarations"):
+                parser = CParser(dtm)
+                dt = parser.parse(source)
+                if dt is None:
+                    raise GhidraError(
+                        f"Failed to parse source: {source!r}",
+                        error_type="ParseError",
+                    )
+                dtm.addDataType(dt, None)
 
             kind = "other"
             if isinstance(dt, Structure):
@@ -92,5 +90,4 @@ def register(mcp: FastMCP) -> None:
         except GhidraError:
             raise
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to parse source: {e}", error_type="ParseError") from e

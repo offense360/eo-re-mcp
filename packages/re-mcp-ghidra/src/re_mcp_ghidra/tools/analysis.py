@@ -19,6 +19,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     paginate_iter,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -80,13 +81,11 @@ def register(mcp: FastMCP) -> None:
 
         addr_set = AddressSet(start, end)
 
-        tx_id = program.startTransaction("Reanalyze range")
         try:
-            cmd = DisassembleCommand(addr_set, addr_set)
-            cmd.applyTo(program, TaskMonitor.DUMMY)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Reanalyze range"):
+                cmd = DisassembleCommand(addr_set, addr_set)
+                cmd.applyTo(program, TaskMonitor.DUMMY)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to reanalyze range: {e}", error_type="AnalysisFailed") from e
 
         GhidraProject.analyze(program)

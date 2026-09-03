@@ -19,6 +19,7 @@ from re_mcp_ghidra.helpers import (
     ANNO_DESTRUCTIVE,
     ANNO_MUTATE,
     ANNO_READ_ONLY,
+    transaction,
 )
 from re_mcp_ghidra.session import session
 
@@ -160,12 +161,10 @@ def register(mcp: FastMCP) -> None:
         parent = _resolve_module(root, parent_path) if parent_path else root
 
         program = session.program
-        tx_id = program.startTransaction("Create folder")
         try:
-            parent.createModule(new_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Create folder"):
+                parent.createModule(new_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to create folder: {e}", error_type="CreateFailed") from e
 
         return FolderActionResult(tree=tree, path=path)
@@ -192,12 +191,10 @@ def register(mcp: FastMCP) -> None:
         new_name = new_parts[-1]
 
         program = session.program
-        tx_id = program.startTransaction("Rename folder")
         try:
-            module.setName(new_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename folder"):
+                module.setName(new_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to rename folder: {e}", error_type="RenameFailed") from e
 
         return FolderActionResult(tree=tree, old_path=old_path, new_path=new_path, path=new_path)
@@ -230,12 +227,10 @@ def register(mcp: FastMCP) -> None:
             )
 
         program = session.program
-        tx_id = program.startTransaction("Delete folder")
         try:
-            parent.removeChild(folder_name)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Delete folder"):
+                parent.removeChild(folder_name)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to delete folder: {e}", error_type="DeleteFailed") from e
 
         return FolderActionResult(tree=tree, path=path)

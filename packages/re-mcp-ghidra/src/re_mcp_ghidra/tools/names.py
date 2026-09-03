@@ -21,6 +21,7 @@ from re_mcp_ghidra.helpers import (
     format_address,
     paginate_iter,
     resolve_address,
+    transaction,
 )
 from re_mcp_ghidra.models import RenameResult
 from re_mcp_ghidra.session import session
@@ -77,15 +78,13 @@ def register(mcp: FastMCP) -> None:
         sym = sym_table.getPrimarySymbol(addr)
         old_name = sym.getName() if sym else format_address(addr.getOffset())
 
-        tx_id = program.startTransaction("Rename address")
         try:
-            if sym:
-                sym.setName(new_name, SourceType.USER_DEFINED)
-            else:
-                sym_table.createLabel(addr, new_name, SourceType.USER_DEFINED)
-            program.endTransaction(tx_id, True)
+            with transaction(program, "Rename address"):
+                if sym:
+                    sym.setName(new_name, SourceType.USER_DEFINED)
+                else:
+                    sym_table.createLabel(addr, new_name, SourceType.USER_DEFINED)
         except Exception as e:
-            program.endTransaction(tx_id, False)
             raise GhidraError(f"Failed to rename: {e}", error_type="RenameFailed") from e
 
         return RenameResult(
