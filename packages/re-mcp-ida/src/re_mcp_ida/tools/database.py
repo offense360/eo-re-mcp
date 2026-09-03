@@ -54,6 +54,13 @@ class OpenDatabaseResult(BaseModel):
         default_factory=list,
         description="Non-fatal warnings raised while opening (e.g. loader options dropped).",
     )
+    analyzed: bool = Field(
+        default=False,
+        description=(
+            "True when the database was already analyzed when opened; "
+            "wait_for_analysis will not re-run analysis."
+        ),
+    )
 
 
 class CloseDatabaseResult(BaseModel):
@@ -251,6 +258,7 @@ def register(mcp: FastMCP):
             segment_count=ida_segment.get_segm_qty(),
             capabilities=session.capabilities,
             warnings=open_result.get("warnings", []),
+            analyzed=open_result.get("analyzed", False),
         )
 
     @mcp.tool(
