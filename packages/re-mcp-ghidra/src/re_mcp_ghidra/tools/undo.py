@@ -25,7 +25,6 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def undo() -> UndoRedoResult:
         """Undo the last database modification."""
-        session._end_open_transactions()
         program = session.program
         if not program.canUndo():
             raise GhidraError("Nothing to undo", error_type="UndoFailed")
@@ -39,7 +38,6 @@ def register(mcp: FastMCP) -> None:
     @session.require_open
     def redo() -> UndoRedoResult:
         """Redo the last undone database modification."""
-        session._end_open_transactions()
         program = session.program
         if not program.canRedo():
             raise GhidraError("Nothing to redo", error_type="RedoFailed")
