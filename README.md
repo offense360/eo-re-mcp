@@ -85,6 +85,10 @@ The Ghidra backend looks for your Ghidra installation in the following order:
 | Windows  | `C:\ghidra_*`, `~/ghidra_*` |
 | Linux    | `/opt/ghidra_*`, `/usr/local/ghidra_*`, `~/ghidra_*` |
 
+4. **pyghidra's `lastrun` file** — the directory Ghidra itself last ran from, read from `$XDG_CONFIG_HOME/ghidra/lastrun` if `XDG_CONFIG_HOME` is set, otherwise `%APPDATA%\ghidra\lastrun` (Windows), `~/Library/ghidra/lastrun` (macOS) or `~/.config/ghidra/lastrun` (Linux).
+
+A configured location that does not exist is logged as a WARNING and skipped; if nothing is found, `open_database` and `list_targets` fail immediately with the list of locations checked.
+
 ## Usage
 
 ### Running the server

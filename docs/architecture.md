@@ -337,7 +337,7 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 | `transforms.py` | Ghidra-specific tool visibility constants — `PINNED_TOOLS` and `MANAGEMENT_TOOLS` frozensets |
 | `resources.py` | MCP resources — read-only, cacheable context endpoints |
 | `prompts/` | MCP prompt stub (no prompts registered yet) |
-| `__init__.py` | Lazy `bootstrap()` to start pyghidra/JVM, plus `find_ghidra_dir()` for Ghidra installation discovery |
+| `__init__.py` | Lazy `bootstrap()` to start pyghidra/JVM, plus `locate_ghidra()` / `find_ghidra_dir()` for Ghidra installation discovery (`GHIDRA_INSTALL_DIR`, `ghidra-config.json`, platform defaults, then pyghidra's `lastrun` file; every source checked is reported and stale ones are warned about) |
 | `_cli.py` | Convenience CLI entry point — `re-mcp-ghidra` is equivalent to `re-mcp --backend ghidra` |
 
 ### Tool modules

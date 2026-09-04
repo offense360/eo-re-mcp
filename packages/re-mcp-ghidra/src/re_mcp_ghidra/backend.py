@@ -6,12 +6,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
 from re_mcp.backend import BackendInfo, build_instructions
 
-from re_mcp_ghidra import find_ghidra_dir
+from re_mcp_ghidra import locate_ghidra
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.transforms import MANAGEMENT_TOOLS, PINNED_TOOLS
 
@@ -19,6 +20,25 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
     from re_mcp.transforms import ToolTransform
     from re_mcp.worker_provider import WorkerPoolProvider
+
+log = logging.getLogger(__name__)
+
+
+def _require_ghidra_dir() -> str:
+    """Return the Ghidra installation directory or raise ``NotFound`` listing every source.
+
+    Runs in the supervisor, before any worker is spawned, so a missing or
+    stale configuration fails immediately instead of surfacing later as an
+    opaque ``SpawnFailed`` from the worker.
+    """
+    search = locate_ghidra()
+    if search.path is None:
+        raise GhidraError(
+            f"Ghidra installation not found. Checked: {search.describe()}. "
+            "Set GHIDRA_INSTALL_DIR to your Ghidra directory.",
+            error_type="NotFound",
+        )
+    return search.path
 
 
 class GhidraBackend:
@@ -65,6 +85,20 @@ class GhidraBackend:
 
     @staticmethod
     def register_management_tools(mcp: FastMCP, pool: WorkerPoolProvider) -> None:
+        # This runs exactly once at supervisor startup, so it is the one place
+        # to tell the operator up front that no Ghidra installation is
+        # configured (the WARNINGs for stale sources are logged by
+        # locate_ghidra itself).
+        search = locate_ghidra()
+        if search.path is None:
+            log.error(
+                "Ghidra installation not found; open_database will fail until it is "
+                "configured. Checked: %s",
+                search.describe(),
+            )
+        else:
+            log.debug("Ghidra installation: %s", search.path)
+
         @mcp.tool(annotations={"title": "Open Database"})
         async def open_database(
             file_path: str,
@@ -98,6 +132,8 @@ class GhidraBackend:
                 compiler_spec: Ghidra compiler spec (e.g. ``gcc``,
                                ``windows``). Auto-detected when omitted.
             """
+            _require_ghidra_dir()  # fail fast, before any worker is spawned
+
             extra = {
                 k: v
                 for k, v in {"language": language, "compiler_spec": compiler_spec}.items()
@@ -125,10 +161,7 @@ class GhidraBackend:
 
     @staticmethod
     def list_targets() -> dict:
-        ghidra_dir = find_ghidra_dir()
-        if ghidra_dir is None:
-            raise GhidraError("Ghidra installation not found", error_type="NotFound")
-        return _list_ghidra_targets(ghidra_dir)
+        return _list_ghidra_targets(_require_ghidra_dir())
 
 
 def _list_ghidra_targets(ghidra_dir: str) -> dict:
