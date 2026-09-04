@@ -61,8 +61,10 @@ evidence. Status as of 2026-09-04.
 | [#13](https://github.com/offense360/eo-re-mcp/issues/13) | Ghidra | Three tools can still leave a partial change when they fail after their first mutation (residual from #11) | Open |
 | [#14](https://github.com/offense360/eo-re-mcp/issues/14) | Ghidra | `transaction()` WARNING fired on pure validation failures. Validation moved ahead of the `with` block in four tools, warning now names the exception, and an AST test (`tests/test_ghidra_transaction_hygiene.py`) guards the pattern with an explicit allow-list for the #13 sites. | Fixed (32e9490) |
 | [#15](https://github.com/offense360/eo-re-mcp/issues/15) | scripts | Source/config files read with the locale codec in `lint_ida_threading.py`, both backends' config loaders and `daemon.py`; now UTF-8 | Fixed (32e9490) |
-| [#16](https://github.com/offense360/eo-re-mcp/issues/16) | tooling | pre-commit chain cannot pass on Windows (15 platform-specific pytest failures, `reuse` not installed) | Open |
+| [#16](https://github.com/offense360/eo-re-mcp/issues/16) | tooling | pre-commit chain cannot pass on Windows. The 7 genuinely POSIX-only tests are now skipped via the `posix_only` marker (merged, abbb268); the other 8 Windows failures turned out to be real defects tracked in #19 and #20. `reuse` hook works via its pre-commit mirror. | Partial; closes after #19, #20 |
 | [#17](https://github.com/offense360/eo-re-mcp/issues/17) | Ghidra | Warn when a configured Ghidra install dir does not exist instead of failing with `SpawnFailed` | Open |
+| [#19](https://github.com/offense360/eo-re-mcp/issues/19) | IDA | Error messages embed paths with `!r`, doubling backslashes on Windows; also fails 6 `test_exceptions.py` tests. Fix the code, keep the tests. | Open |
+| [#20](https://github.com/offense360/eo-re-mcp/issues/20) | tests | Two proxy tests are Windows-hostile (`signal.SIGKILL` in a Windows-targeted test, unescaped path regex) | Open |
 
 ### Known constraints of this environment
 
