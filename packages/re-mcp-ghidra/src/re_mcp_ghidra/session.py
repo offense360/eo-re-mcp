@@ -225,10 +225,11 @@ class Session:
 
             if run_auto_analysis:
                 # Ghidra 12.x has no setAnalyzedFlag(); reset the flags so a
-                # forced pass starts clean.  pyghidra.analyze() persists the
-                # result via markProgramAnalyzed inside its own transaction.
+                # forced pass starts clean.  The session fields are not set
+                # yet, so run the analysis on the local program; the undo
+                # history is cleared once below, after everything is done.
                 GhidraProgramUtilities.resetAnalysisFlags(program)
-                pyghidra.analyze(program)
+                _run_analysis(program, mark_analyzed=True)
                 analyzed = True
 
         except GhidraError:
@@ -247,19 +248,55 @@ class Session:
         self._current_path = path
         self._flat_api = FlatProgramAPI(program, TaskMonitor.DUMMY)
         self.capabilities = self._probe_capabilities()
+        # The loader, "Initialize analysis options" and a run_auto_analysis
+        # pass all leave undo entries; a bare undo right after open would
+        # roll back the analysis and then the program image (#18 U5).
+        # Undo means "undo my tool calls", so the history starts empty.
+        self._clear_undo_history()
         log.info(
             "Opened database: %s (analyzed=%s, capabilities: %s)", path, analyzed, self.capabilities
         )
         log.debug("open: after open %s", self._tx_state())
         return {"status": "ok", "path": path, "warnings": warnings, "analyzed": analyzed}
 
+    def analyze(self, *, mark_analyzed: bool = True) -> None:
+        """Run Ghidra auto-analysis to completion inside one transaction.
+
+        Same calls as GhidraProject.analyze() (Ghidra 12.1.2), wrapped in a
+        transaction because nothing holds one open any more (#18).  Not
+        ``pyghidra.analyze``: that also collects the analysis log on every
+        callback, which we discard and which cost ~20% in the #18 spike.
+        Analysis passes are not undo steps (matches IDA): the undo history is
+        cleared afterwards.
+
+        Args:
+            mark_analyzed: persist the "analyzed" flag afterwards (see
+                :meth:`mark_program_analyzed`).  ``reanalyze_range`` passes
+                False so a partial pass does not claim the whole program is
+                analyzed (#8).
+        """
+        if self._program is None:
+            raise GhidraError("No database is open.", error_type="NoDatabase")
+        _run_analysis(self._program, mark_analyzed=mark_analyzed)
+        self._clear_undo_history()
+
+    def _clear_undo_history(self) -> None:
+        """Drop the program's undo/redo history.
+
+        ``DomainObject.clearUndo()`` (Ghidra 12.1.2 ``DomainObject.java:569``,
+        implemented by ``DomainObjectAdapterDB.java:488``).  Called at the end
+        of :meth:`open` and after every analysis pass so that ``undo`` only
+        ever reverts a tool call the user made.
+        """
+        self._program.clearUndo()
+
     def mark_program_analyzed(self) -> None:
         """Persist the "analyzed" program option after a completed analysis pass.
 
         Stored in the program's PROGRAM_INFO options, so it survives ``save()``
         and makes ``GhidraProgramUtilities.isAnalyzed`` true when the project
-        is reopened (see ``open()``).  Idempotent — ``pyghidra.analyze()``
-        already does it for the passes it runs.
+        is reopened (see ``open()``).  Idempotent — :meth:`analyze` already
+        does it for the passes it runs.
         """
         from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
 
@@ -403,6 +440,31 @@ class Session:
 
 # Module-level singleton
 session = Session()
+
+
+def _run_analysis(program, *, mark_analyzed: bool) -> None:
+    """Body of :meth:`Session.analyze` for a program not yet owned by the session.
+
+    Mirrors ``GhidraProject.analyze`` (Ghidra 12.1.2 ``GhidraProject.java:534``:
+    ``getAnalysisManager`` → ``initializeOptions`` → ``reAnalyzeAll(null)`` →
+    ``startAnalysis(monitor)``) inside ``helpers.transaction`` so the pass
+    mutates inside a transaction and a failing pass rolls back cleanly.
+    ``markProgramAnalyzed`` opens a transaction of its own, so it runs after
+    the "Analyze" one has been committed.
+    """
+    from ghidra.app.plugin.core.analysis import AutoAnalysisManager  # noqa: PLC0415
+    from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
+    from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
+    from re_mcp_ghidra.helpers import transaction  # noqa: PLC0415
+
+    with transaction(program, "Analyze"):
+        mgr = AutoAnalysisManager.getAnalysisManager(program)
+        mgr.initializeOptions()
+        mgr.reAnalyzeAll(None)
+        mgr.startAnalysis(TaskMonitor.DUMMY)
+    if mark_analyzed:
+        GhidraProgramUtilities.markProgramAnalyzed(program)
 
 
 def _get_language_service():

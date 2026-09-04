@@ -65,3 +65,16 @@ def test_ida_still_registers_undo_redo():
     """IDA keeps its undo/redo tools; only the Ghidra backend drops them."""
     names = _tool_names(IDA_TOOLS_DIR)
     assert {"undo", "redo"} <= names
+
+
+def test_analysis_tools_run_analysis_through_the_session():
+    """``analyze_database`` / ``reanalyze_range`` call ``session.analyze()`` (#18).
+
+    Neither ``GhidraProject.analyze`` (opens no transaction of its own) nor
+    ``pyghidra.analyze`` (quadratic log accumulation) may be used.
+    """
+    source = (GHIDRA_TOOLS_DIR / "analysis.py").read_text(encoding="utf-8")
+    assert "session.analyze(" in source
+    assert "GhidraProject" not in source
+    assert "pyghidra.analyze" not in source
+    assert "import pyghidra" not in source

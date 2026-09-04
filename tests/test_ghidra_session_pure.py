@@ -8,15 +8,19 @@ The lazily imported ``pyghidra`` / ``ghidra.*`` / ``java.*`` modules are stubbed
 via ``sys.modules`` inside a fixture so no other test file is affected.
 
 The stubs mirror the pyghidra 3.x project API the session now uses
-(``open_project`` / ``consume_program`` / ``program_loader`` / ``analyze``)
-rather than ``ghidra.base.project.GhidraProject`` (#18).  Crucially, no
-long-lived "Batch Processing" transaction exists in this model, so save goes
-through ``DomainFile.save`` and the first save mirrors what
-``GhidraProject.saveAs`` did by hand.
+(``open_project`` / ``consume_program`` / ``program_loader``) rather than
+``ghidra.base.project.GhidraProject`` (#18).  Crucially, no long-lived
+"Batch Processing" transaction exists in this model, so save goes through
+``DomainFile.save`` and the first save mirrors what ``GhidraProject.saveAs``
+did by hand.  The ``pyghidra`` stub deliberately has **no** ``analyze``:
+auto-analysis is run inline by ``Session.analyze()`` inside one
+``helpers.transaction`` (see ``test_analyze_*``), so any call to
+``pyghidra.analyze`` fails here with ``AttributeError``.
 """
 
 from __future__ import annotations
 
+import pathlib
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
@@ -65,6 +69,7 @@ class FakeProgram:
         self.start_transaction_calls: list[str] = []
         self.end_transaction_calls: list[tuple] = []
         self.release_calls: list[object] = []
+        self.clear_undo_calls: list[int] = []
         self.changed = True
 
     def getName(self):
@@ -88,6 +93,11 @@ class FakeProgram:
     def release(self, consumer):
         self.release_calls.append(consumer)
         self._calls.append(("release", consumer))
+
+    def clearUndo(self):
+        """``DomainObject.clearUndo()`` (Ghidra 12.1.2 ``DomainObject.java:569``)."""
+        self.clear_undo_calls.append(len(self._calls))
+        self._calls.append(("clearUndo",))
 
     def isChanged(self):
         return self.changed
@@ -229,10 +239,11 @@ def ghidra_stubs(monkeypatch):
         "import_result": None,
         "load_error": None,
         "builder_config": None,
-        # GhidraProgramUtilities stub: what isAnalyzed() reports, whether
-        # pyghidra.analyze() may be called, and an ordered call log.
+        # GhidraProgramUtilities stub: what isAnalyzed() reports, an
+        # exception the fake AutoAnalysisManager.startAnalysis should raise,
+        # and an ordered call log.
         "is_analyzed": False,
-        "allow_analyze": False,
+        "analysis_error": None,
         "calls": [],
     }
 
@@ -252,21 +263,13 @@ def ghidra_stubs(monkeypatch):
     def program_loader():
         return FakeBuilder(state)
 
-    def analyze(program, monitor=None):
-        if not state["allow_analyze"]:
-            raise AssertionError("analyze must not be called in these tests")
-        state["calls"].append(("analyze", program))
-        # Real pyghidra.analyze marks the program analyzed inside its own
-        # "Analyze" transaction (pyghidra/api.py); mirror that here.
-        state["calls"].append(("mark", program))
-        return "analysis log"
-
+    # No ``analyze`` on purpose: the session must not call pyghidra.analyze()
+    # (it re-serialises the analysis log on every callback, #18).
     pyghidra_stub = _make_module(
         "pyghidra",
         open_project=open_project,
         consume_program=consume_program,
         program_loader=program_loader,
-        analyze=analyze,
         ProgramTypeError=FakeProgramTypeError,
     )
 
@@ -297,6 +300,8 @@ def ghidra_stubs(monkeypatch):
             self.path = path
 
     class AutoAnalysisManager:
+        """Records the calls ``GhidraProject.analyze`` made (Ghidra 12.1.2)."""
+
         @staticmethod
         def getAnalysisManager(program):
             state["calls"].append(("getAnalysisManager", program))
@@ -304,6 +309,16 @@ def ghidra_stubs(monkeypatch):
             mgr.initializeOptions.side_effect = lambda: state["calls"].append(
                 ("initializeOptions", program)
             )
+            mgr.reAnalyzeAll.side_effect = lambda restrict: state["calls"].append(
+                ("reAnalyzeAll", program, restrict)
+            )
+
+            def start_analysis(monitor):
+                state["calls"].append(("startAnalysis", program, monitor))
+                if state["analysis_error"] is not None:
+                    raise state["analysis_error"]
+
+            mgr.startAnalysis.side_effect = start_analysis
             return mgr
 
         @staticmethod
@@ -693,22 +708,36 @@ def test_open_import_reports_not_analyzed(ghidra_stubs, existing_project):
     assert ("isAnalyzed", program) not in ghidra_stubs["calls"]
 
 
-def test_open_with_run_auto_analysis_resets_then_marks(ghidra_stubs, existing_project):
-    """run_auto_analysis=True: resetAnalysisFlags → pyghidra.analyze (which marks).
+def test_open_with_run_auto_analysis_uses_inline_analysis(ghidra_stubs, existing_project):
+    """run_auto_analysis=True: resetAnalysisFlags → inline analysis → mark.
 
-    Ghidra 12.1.2 has no ``setAnalyzedFlag``; the stub deliberately omits it so
-    the old call fails here.
+    The ``pyghidra`` stub has no ``analyze`` (calling it raises
+    AttributeError), and Ghidra 12.1.2 has no ``setAnalyzedFlag``, so this
+    only passes when the session runs the analysis itself inside one
+    ``helpers.transaction`` (#18).
     """
-    program = MagicMock(name="program")
+    program = FakeProgram(calls=ghidra_stubs["calls"])
     ghidra_stubs["project"] = FakeProject(ghidra_stubs["calls"])
     ghidra_stubs["consume_result"] = program
-    ghidra_stubs["allow_analyze"] = True
 
     session = Session()
     result = session.open(str(existing_project), run_auto_analysis=True)
 
-    ordered = [c for c in ghidra_stubs["calls"] if c[0] in ("reset", "analyze", "mark")]
-    assert ordered == [("reset", program), ("analyze", program), ("mark", program)]
+    names = [c[0] for c in ghidra_stubs["calls"]]
+    assert "analyze" not in names
+    assert names.index("reset") < names.index("start")
+    assert names[names.index("start") : names.index("end") + 1] == [
+        "start",
+        "getAnalysisManager",
+        "initializeOptions",
+        "reAnalyzeAll",
+        "startAnalysis",
+        "end",
+    ]
+    assert program.start_transaction_calls == ["Analyze"]
+    assert program.end_transaction_calls == [(99, True)]
+    assert names.index("end") < names.index("mark")
+    assert ("mark", program) in ghidra_stubs["calls"]
     assert result.get("analyzed") is True
 
 
@@ -753,3 +782,152 @@ def test_no_ghidra_project_import(ghidra_stubs, existing_project):
     _open(existing_project)
 
     assert "ghidra.base.project" not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# analyze() and the undo history — issue #18
+# ---------------------------------------------------------------------------
+
+
+def _analysis_names(calls) -> list[str]:
+    keep = {
+        "start",
+        "getAnalysisManager",
+        "initializeOptions",
+        "reAnalyzeAll",
+        "startAnalysis",
+        "end",
+        "mark",
+        "clearUndo",
+    }
+    return [c[0] for c in calls if c[0] in keep]
+
+
+def test_analyze_runs_in_one_transaction_then_marks_and_clears_undo(ghidra_stubs, existing_project):
+    """Same calls as ``GhidraProject.analyze`` (Ghidra 12.1.2), in one transaction.
+
+    ``markProgramAnalyzed`` opens its own transaction, so it runs after the
+    "Analyze" one is committed; the undo history is cleared last because an
+    analysis pass is not an undo step (matches IDA).
+    """
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    session, _ = _open_existing(ghidra_stubs, existing_project, program)
+    ghidra_stubs["calls"].clear()
+
+    session.analyze()
+
+    assert _analysis_names(ghidra_stubs["calls"]) == [
+        "start",
+        "getAnalysisManager",
+        "initializeOptions",
+        "reAnalyzeAll",
+        "startAnalysis",
+        "end",
+        "mark",
+        "clearUndo",
+    ]
+    assert program.start_transaction_calls == ["Analyze"]
+    assert program.end_transaction_calls == [(99, True)]
+    reanalyze = next(c for c in ghidra_stubs["calls"] if c[0] == "reAnalyzeAll")
+    assert reanalyze == ("reAnalyzeAll", program, None)
+    start_analysis = next(c for c in ghidra_stubs["calls"] if c[0] == "startAnalysis")
+    assert start_analysis[2] is sys.modules["ghidra.util.task"].TaskMonitor.DUMMY
+    assert ghidra_stubs["calls"].count(("mark", program)) == 1
+
+
+def test_analyze_without_mark_skips_mark_but_clears_undo(ghidra_stubs, existing_project):
+    """``reanalyze_range`` must not flip the persisted analyzed flag (#8)."""
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    session, _ = _open_existing(ghidra_stubs, existing_project, program)
+    ghidra_stubs["calls"].clear()
+
+    session.analyze(mark_analyzed=False)
+
+    names = _analysis_names(ghidra_stubs["calls"])
+    assert "mark" not in names
+    assert names[-1] == "clearUndo"
+    assert program.end_transaction_calls == [(99, True)]
+
+
+def test_analyze_failure_aborts_transaction_and_raises(ghidra_stubs, existing_project):
+    """A failing pass is rolled back like any other tool transaction."""
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    session, _ = _open_existing(ghidra_stubs, existing_project, program)
+    ghidra_stubs["calls"].clear()
+    ghidra_stubs["analysis_error"] = RuntimeError("analyzer exploded")
+
+    with pytest.raises(RuntimeError, match="analyzer exploded"):
+        session.analyze()
+
+    assert program.end_transaction_calls == [(99, False)]
+    names = _analysis_names(ghidra_stubs["calls"])
+    assert "mark" not in names
+    assert "clearUndo" not in names
+
+
+def test_analyze_without_open_database_raises(ghidra_stubs):
+    session = Session()
+
+    with pytest.raises(GhidraError) as excinfo:
+        session.analyze()
+
+    assert excinfo.value.error_type == "NoDatabase"
+
+
+def test_open_clears_undo_history_last_on_import(ghidra_stubs, existing_project):
+    """The loader and "Initialize analysis options" leave undo entries (#18 U5);
+    ``open()`` clears them once everything else is done."""
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    ghidra_stubs["project"] = FakeProject(ghidra_stubs["calls"])
+    ghidra_stubs["consume_result"] = FileNotFoundError("no program")
+    ghidra_stubs["import_result"] = program
+
+    _open(existing_project)
+
+    assert ghidra_stubs["calls"][-1] == ("clearUndo",)
+    assert len(program.clear_undo_calls) == 1
+
+
+def test_open_clears_undo_history_last_on_existing_project(ghidra_stubs, existing_project):
+    program = FakeProgram(can_save=True, calls=ghidra_stubs["calls"])
+    _open_existing(ghidra_stubs, existing_project, program)
+
+    assert ghidra_stubs["calls"][-1] == ("clearUndo",)
+    assert len(program.clear_undo_calls) == 1
+
+
+def test_open_with_run_auto_analysis_clears_undo_once_at_the_end(ghidra_stubs, existing_project):
+    """The ``run_auto_analysis`` pass is not an undo step either, and the
+    history is cleared exactly once, after ``markProgramAnalyzed``."""
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    ghidra_stubs["project"] = FakeProject(ghidra_stubs["calls"])
+    ghidra_stubs["consume_result"] = program
+
+    Session().open(str(existing_project), run_auto_analysis=True)
+
+    assert ghidra_stubs["calls"][-1] == ("clearUndo",)
+    assert len(program.clear_undo_calls) == 1
+    names = [c[0] for c in ghidra_stubs["calls"]]
+    assert names.index("mark") < names.index("clearUndo")
+
+
+def test_no_pyghidra_analyze_reference():
+    """``pyghidra.analyze`` must not be called anywhere in the Ghidra package.
+
+    It accumulates the analysis log quadratically on every callback and we
+    discard the result (~20 % slower in the #18 spike); ``Session.analyze``
+    runs the same four ``AutoAnalysisManager`` calls inline instead.
+    """
+    src_dir = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "packages"
+        / "re-mcp-ghidra"
+        / "src"
+        / "re_mcp_ghidra"
+    )
+    offenders = [
+        str(path.relative_to(src_dir))
+        for path in sorted(src_dir.rglob("*.py"))
+        if "pyghidra.analyze(" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
