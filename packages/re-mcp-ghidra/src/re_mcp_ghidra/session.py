@@ -34,6 +34,12 @@ class Session:
         self._project_location = None
         self._current_path: str | None = None
         self._flat_api = None
+        # The Java object that "consumes" the open program.  Ghidra disposes a
+        # DomainObject only once every consumer has released it, so the session
+        # holds exactly one and releases it in close() *before* the project is
+        # closed; otherwise DefaultProjectData defers dispose and the project
+        # .lock file survives.
+        self._consumer = None
         self.capabilities: dict[str, bool] = {}
 
     def is_open(self) -> bool:
@@ -61,9 +67,17 @@ class Session:
     ) -> dict:
         """Open a binary for analysis.
 
+        Uses the pyghidra 3.x project API (``open_project`` /
+        ``consume_program`` / ``program_loader``) rather than
+        ``ghidra.base.project.GhidraProject``.  The difference that matters is
+        that no "Batch Processing" transaction is left open for the life of the
+        program, so tool transactions are outermost, ``DomainFile.save`` works
+        and undo/redo are usable (#18).
+
         Returns a status dict on success.  Raises :class:`GhidraError` on failure.
         """
-        from ghidra.base.project import GhidraProject  # noqa: PLC0415
+        import pyghidra  # noqa: PLC0415
+        from ghidra.app.plugin.core.analysis import AutoAnalysisManager  # noqa: PLC0415
         from ghidra.program.flatapi import FlatProgramAPI  # noqa: PLC0415
         from ghidra.program.model.lang import (  # noqa: PLC0415
             CompilerSpecID,
@@ -71,7 +85,10 @@ class Session:
         )
         from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
-        from java.io import File, FileNotFoundException  # noqa: PLC0415
+        from java.io import File  # noqa: PLC0415
+        from java.lang import Object as JavaObject  # noqa: PLC0415
+
+        from re_mcp_ghidra.helpers import transaction  # noqa: PLC0415
 
         path = os.path.realpath(os.path.expanduser(file_path))
 
@@ -93,6 +110,8 @@ class Session:
 
         warnings: list[str] = []
         project = None
+        program = None
+        consumer = JavaObject()
         # True only for a program restored from the project whose stored
         # "analyzed" option is set; anything imported is unanalyzed.
         analyzed = False
@@ -107,11 +126,15 @@ class Session:
                     shutil.rmtree(rep_path)
                 log.info("force_new: removed existing project files")
 
-            if os.path.exists(project_file):
-                project = GhidraProject.openProject(project_location, project_name)
+            project_exists = os.path.exists(project_file)
+            project = pyghidra.open_project(
+                project_location, project_name, create=not project_exists
+            )
+
+            if project_exists:
                 try:
-                    program = project.openProgram("/", binary_name, False)
-                except FileNotFoundException:
+                    program, _ = pyghidra.consume_program(project, "/" + binary_name, consumer)
+                except FileNotFoundError:
                     # The project exists but the program was never saved into it
                     # (e.g. the previous session closed with save=False).
                     log.info(
@@ -120,19 +143,17 @@ class Session:
                         binary_name,
                     )
                     program = None
-                if program is None:
-                    program = project.importProgram(File(path))
-                    if program is None:
-                        project.close()
-                        raise GhidraError(
-                            f"Failed to import {path} into existing project",
-                            error_type="ImportFailed",
-                        )
-                else:
+                except pyghidra.ProgramTypeError as exc:
+                    project.close()
+                    raise GhidraError(
+                        f"/{binary_name} exists in project {project_name} "
+                        f"but is not a Program: {exc}",
+                        error_type="ImportFailed",
+                    ) from exc
+                if program is not None:
                     analyzed = bool(GhidraProgramUtilities.isAnalyzed(program))
-            else:
-                project = GhidraProject.createProject(project_location, project_name, False)
-                lang_svc = None
+
+            if program is None:
                 lang = None
                 cspec = None
 
@@ -157,13 +178,30 @@ class Session:
                                 error_type="InvalidArgument",
                             ) from e
 
+                # name(binary_name) pins the program name so the reopen path
+                # above finds it as "/<binary name>"; the loader would
+                # otherwise use its own preferred name for the source.
+                builder = (
+                    pyghidra.program_loader()
+                    .project(project)
+                    .source(File(path))
+                    .name(binary_name)
+                    .monitor(TaskMonitor.DUMMY)
+                )
                 if lang is not None:
+                    builder = builder.language(lang)
                     if cspec is not None:
-                        program = project.importProgram(File(path), lang, cspec)
-                    else:
-                        program = project.importProgramFast(File(path), lang)
-                else:
-                    program = project.importProgram(File(path))
+                        builder = builder.compiler(cspec)
+
+                try:
+                    with builder.load() as load_results:
+                        program = load_results.getPrimaryDomainObject(consumer)
+                except Exception as exc:
+                    project.close()
+                    raise GhidraError(
+                        f"Failed to import binary: {path}: {exc}",
+                        error_type="ImportFailed",
+                    ) from exc
 
                 if program is None:
                     project.close()
@@ -172,12 +210,25 @@ class Session:
                         error_type="ImportFailed",
                     )
 
+                loaded_name = str(program.getName())
+                if loaded_name != binary_name:
+                    warnings.append(
+                        f"Loader named the program {loaded_name!r}, expected {binary_name!r}"
+                    )
+                    log.warning("Loaded program name %r differs from %r", loaded_name, binary_name)
+
+                # GhidraProject.initializeProgram() did this while importing;
+                # ProgramLoader does not.  It needs a transaction of its own now
+                # that nothing holds one open.
+                with transaction(program, "Initialize analysis options"):
+                    AutoAnalysisManager.getAnalysisManager(program).initializeOptions()
+
             if run_auto_analysis:
                 # Ghidra 12.x has no setAnalyzedFlag(); reset the flags so a
-                # forced pass starts clean, then persist the result.
+                # forced pass starts clean.  pyghidra.analyze() persists the
+                # result via markProgramAnalyzed inside its own transaction.
                 GhidraProgramUtilities.resetAnalysisFlags(program)
-                GhidraProject.analyze(program)
-                GhidraProgramUtilities.markProgramAnalyzed(program)
+                pyghidra.analyze(program)
                 analyzed = True
 
         except GhidraError:
@@ -192,12 +243,14 @@ class Session:
         self._program = program
         self._project = project
         self._project_location = project_location
+        self._consumer = consumer
         self._current_path = path
         self._flat_api = FlatProgramAPI(program, TaskMonitor.DUMMY)
         self.capabilities = self._probe_capabilities()
         log.info(
             "Opened database: %s (analyzed=%s, capabilities: %s)", path, analyzed, self.capabilities
         )
+        log.debug("open: after open %s", self._tx_state())
         return {"status": "ok", "path": path, "warnings": warnings, "analyzed": analyzed}
 
     def mark_program_analyzed(self) -> None:
@@ -205,7 +258,8 @@ class Session:
 
         Stored in the program's PROGRAM_INFO options, so it survives ``save()``
         and makes ``GhidraProgramUtilities.isAnalyzed`` true when the project
-        is reopened (see ``open()``).
+        is reopened (see ``open()``).  Idempotent — ``pyghidra.analyze()``
+        already does it for the passes it runs.
         """
         from ghidra.program.util import GhidraProgramUtilities  # noqa: PLC0415
 
@@ -217,14 +271,17 @@ class Session:
         """Detect which optional features are available."""
         return {
             "decompiler": True,
-            # GhidraProject keeps a transaction open for the life of the program
-            # and Ghidra only allows undo/redo when no transaction is active, so
-            # the undo/redo tools are not registered on this backend (#10).
+            # Stage A of the #18 spike only moves the lifecycle onto the
+            # pyghidra project API.  The undo/redo tools come back in stage C.
             "undo": False,
         }
 
     def _tx_state(self) -> str:
-        """Describe the current transaction and save-related flags (for DEBUG logs)."""
+        """Describe the current transaction and save-related flags (for DEBUG logs).
+
+        Under the pyghidra project API ``tx=None`` between tool calls is the
+        expected state; anything else means a transaction leaked.
+        """
         program = self._program
         if program is None:
             return "program=None"
@@ -248,25 +305,36 @@ class Session:
     def save(self) -> None:
         """Persist the current program to disk.
 
-        GhidraProject keeps a long-lived "Batch Processing" transaction open
-        for every program it imports or opens and tracks its id privately.
-        Only ``GhidraProject.save()`` / ``saveAs()`` end that transaction
-        before writing (and start a fresh one afterwards); calling
-        ``DomainFile.save()`` directly fails with "Unable to lock due to
-        active transaction".  ``saveAs`` is required for the first save of an
-        imported program, which has no project file yet (``canSave()`` false).
+        With no standing transaction (the pyghidra project API leaves none
+        open) ``DomainFile.save()`` succeeds directly.  The "Unable to lock due
+        to active transaction" failure that forced ``GhidraProject.save`` in #1
+        cannot happen here, because every tool transaction is closed before the
+        call returns.
+
+        A freshly imported program has no project file yet (``canSave()``
+        false), so the first save mirrors what ``GhidraProject.saveAs`` did:
+        delete any stale file of the same name in the root folder, then create
+        it.  ``Loaded.save()`` is deliberately not used — it renames on
+        collision ("name.0") instead of overwriting.
         """
+        from ghidra.util.task import TaskMonitor  # noqa: PLC0415
+
         if self._program is None or self._project is None:
             raise GhidraError("No database is open.", error_type="NoDatabase")
 
         df = self._program.getDomainFile()
         log.debug("save: before save %s", self._tx_state())
         if df is not None and df.canSave():
-            self._project.save(self._program)
-            log.debug("save: project.save done %s", self._tx_state())
+            df.save(TaskMonitor.DUMMY)
+            log.debug("save: DomainFile.save done %s", self._tx_state())
         else:
-            self._project.saveAs(self._program, "/", self._program.getName(), True)
-            log.debug("save: saveAs done %s", self._tx_state())
+            name = self._program.getName()
+            folder = self._project.getProjectData().getRootFolder()
+            existing = folder.getFile(name)
+            if existing is not None:
+                existing.delete()
+            folder.createFile(name, self._program, TaskMonitor.DUMMY)
+            log.debug("save: createFile done %s", self._tx_state())
 
     def close(self, save: bool = True) -> dict:
         """Close the current database.
@@ -281,6 +349,11 @@ class Session:
         try:
             if save and self._program is not None and self._project is not None:
                 self.save()
+            # Release before closing the project: DefaultProjectData.close()
+            # defers dispose while inUseCount != 0, which would leave the
+            # project .lock file behind.
+            if self._program is not None and self._consumer is not None:
+                self._program.release(self._consumer)
             if self._project is not None:
                 self._project.close()
         except Exception as exc:
@@ -290,6 +363,7 @@ class Session:
             self._program = None
             self._project = None
             self._project_location = None
+            self._consumer = None
             self._current_path = None
             self._flat_api = None
 

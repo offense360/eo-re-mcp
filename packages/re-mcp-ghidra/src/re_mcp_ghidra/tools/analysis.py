@@ -68,8 +68,8 @@ def register(mcp: FastMCP) -> None:
             start_address: Start of the range.
             end_address: End of the range (exclusive).
         """
+        import pyghidra  # noqa: PLC0415
         from ghidra.app.cmd.disassemble import DisassembleCommand  # noqa: PLC0415
-        from ghidra.base.project import GhidraProject  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         program = session.program
@@ -88,7 +88,10 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             raise GhidraError(f"Failed to reanalyze range: {e}", error_type="AnalysisFailed") from e
 
-        GhidraProject.analyze(program)
+        # pyghidra.analyze() opens its own "Analyze" transaction; the session no
+        # longer keeps a standing one open (#18).  The analysis log is discarded
+        # to keep the tool response shape unchanged.
+        pyghidra.analyze(program)
 
         return ReanalyzeRangeResult(
             start=format_address(start.getOffset()),
@@ -107,11 +110,11 @@ def register(mcp: FastMCP) -> None:
         fully analyzed before querying.  Returns a summary of database
         statistics after analysis finishes.
         """
-        from ghidra.base.project import GhidraProject  # noqa: PLC0415
+        import pyghidra  # noqa: PLC0415
 
         program = session.program
 
-        GhidraProject.analyze(program)
+        pyghidra.analyze(program)
         # Persist the analyzed flag so a reopened project is not re-analyzed (#8).
         session.mark_program_analyzed()
 
