@@ -11,6 +11,7 @@ is mocked.
 
 from __future__ import annotations
 
+import re
 import signal
 import subprocess
 import threading
@@ -162,7 +163,7 @@ class TestStopDaemon:
             _stop_daemon({"pid": 1234})
         assert (1234, signal.SIGTERM) in kill_calls
         sigs = [sig for _, sig in kill_calls]
-        assert signal.SIGKILL not in sigs
+        assert getattr(signal, "SIGKILL", 9) not in sigs
 
 
 class TestEnsureDaemon:
@@ -345,7 +346,7 @@ class TestSpawnDaemon:
             patch("re_mcp.proxy.resolve_log_file", return_value=stderr_path),
             patch("subprocess.Popen", return_value=mock_proc),
             patch("re_mcp.proxy.read_state", return_value=None),
-            pytest.raises(RuntimeError, match=stderr_path),
+            pytest.raises(RuntimeError, match=re.escape(stderr_path)),
         ):
             _spawn_daemon(IDABackend)
 

@@ -454,7 +454,7 @@ def reject_fat_arch_on_database(file_path: str, fat_arch: str) -> None:
     if not _is_primary_idb_path(file_path):
         return
     raise IDAError(
-        f"fat_arch={fat_arch!r} was specified but {file_path!r} "
+        f"fat_arch={fat_arch!r} was specified but '{file_path}' "
         "is an existing IDA database (.i64/.idb).  The stored "
         "database already pins a specific slice — remove fat_arch "
         "to reopen it, or point file_path at the original binary "
@@ -490,7 +490,7 @@ def reject_force_new_on_database(file_path: str, force_new: bool) -> None:
         return
     raise IDAError(
         f"force_new=True cannot be combined with an existing IDA "
-        f"database path ({file_path!r}).  force_new deletes the "
+        f"database path ('{file_path}').  force_new deletes the "
         "stored analysis and re-analyzes from the original binary, "
         "so it needs the binary path — not the database path — as "
         "file_path.  Pass the original binary (raw file without "
@@ -558,7 +558,7 @@ def check_fat_binary(file_path: str, fat_arch: str, force_new: bool) -> int | No
     if slices is None:
         if fat_arch:
             raise IDAError(
-                f"fat_arch={fat_arch!r} was specified but {file_path!r} "
+                f"fat_arch={fat_arch!r} was specified but '{file_path}' "
                 "is not a Mach-O fat (universal) binary.  Remove "
                 "fat_arch for thin binaries and non-Mach-O files.",
                 error_type="InvalidArgument",
