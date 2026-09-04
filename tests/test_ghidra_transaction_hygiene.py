@@ -4,10 +4,14 @@
 
 """Guard against validation raises inside Ghidra ``with transaction(...)`` blocks (#14).
 
-``helpers.transaction()`` never aborts (a nested abort would roll back the
-whole GhidraProject batch, #11).  When the ``with`` body raises it logs a
-WARNING meaning "a mutation may have been left behind".  That warning is
-only useful if it is true, so a tool must do its pure validation (lookups,
+Validate before mutate keeps error messages clear and the undo history
+clean (#18); it is no longer a data-safety requirement (#11 is obsolete).
+Since #18 the session keeps no standing transaction, so a tool transaction
+is the outermost one and ``helpers.transaction()`` aborts it when the body
+raises: nothing from a failed call survives.  But an abort still logs a
+WARNING and costs a rolled-back transaction, and a raise that comes from
+inside the block is a Java exception rather than a ``GhidraError`` with a
+useful message.  So a tool must do its pure validation (lookups,
 ``isinstance``, ``is None``, argument parsing) *before* entering the block.
 
 This test parses every ``re_mcp_ghidra.tools`` module with ``ast`` (no JVM
@@ -19,8 +23,9 @@ simple and conservative:
   ``PURE_NAMES``, a constructor (``CapitalizedName(...)``), or a method
   whose name starts with one of ``READ_PREFIXES`` (``get``, ``is``, ``has``,
   ...).  ``parse`` is treated as a read here even though ``CParser.parse``
-  can add types to the DataTypeManager -- that impurity is tracked in #13
-  and the affected tools are listed in ``ALLOWED``.
+  can add types to the DataTypeManager -- that impurity was tracked in #13
+  (closed by #18: the abort now rolls those types back) and the affected
+  tools are listed in ``ALLOWED``.
 * Every other call is assumed to mutate.  Once a mutating call has been
   seen on a path, later raises on that path are legitimate (that is the
   case the WARNING exists for).
@@ -30,7 +35,7 @@ simple and conservative:
 
 Unknown calls count as mutating, so the rule under-reports rather than
 over-reports.  Sites that genuinely cannot validate first belong in
-``ALLOWED`` with the issue that tracks them, never in a file-level opt-out.
+``ALLOWED`` with the issue that explains them, never in a file-level opt-out.
 """
 
 from __future__ import annotations
@@ -53,9 +58,10 @@ TOOLS_DIR = (
 # stale entry fails the test and gets removed when its issue is fixed.
 ALLOWED: dict[str, str] = {
     # CParser.parse() may add intermediate types to the DTM before returning
-    # None; the null check cannot precede the parser run.
-    "types.parse_type_declaration": "#13 CParser partial DTM state",
-    "srclang.parse_source_declarations": "#13 CParser partial DTM state",
+    # None; the null check cannot precede the parser run.  Harmless since #18
+    # (the abort rolls the types back), but the rule still trips here.
+    "types.parse_type_declaration": "#13 (closed by #18: partial changes now roll back)",
+    "srclang.parse_source_declarations": "#13 (closed by #18: partial changes now roll back)",
 }
 
 PURE_NAMES = frozenset(

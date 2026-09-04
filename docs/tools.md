@@ -498,12 +498,12 @@ Directory tree (folder organization).
 
 ## Undo
 
-Undo and redo operations. Not available on Ghidra: pyghidra's `GhidraProject` keeps a transaction open for the life of the program, and Ghidra only allows undo when no transaction is active (#10). The Ghidra backend reports `capabilities.undo == false` and does not register these tools.
+Undo and redo operations. Both backends report `capabilities.undo == true`. On Ghidra each mutating tool call is one undo step; `open_database` and analysis passes (`run_auto_analysis=True`, `analyze_database`, `reanalyze_range`) clear the undo history, and `save_database` also clears it (Ghidra drops the history when a program is saved), so `undo` right after any of those reports `Nothing to undo`.
 
 | Tool | Description |
 |------|-------------|
-| `undo` (IDA) | Undo the last modification. |
-| `redo` (IDA) | Redo the last undone change. |
+| `undo` | Undo the last modification. |
+| `redo` | Redo the last undone change. |
 
 ## Snapshots
 

@@ -237,15 +237,18 @@ Mutation tools return the previous state of modified items (e.g. `old_comment`, 
 
 ### Ghidra transactions
 
-Every mutation in the Ghidra backend runs inside a Ghidra transaction, and every one of them is a *nested* transaction. `GhidraProject` (pyghidra's project wrapper used by `Session.open()`) starts a long-lived `"Batch Processing"` transaction for each program it imports or opens and keeps its id private; only `GhidraProject.save()`, `saveAs()` and `close()` end it (and `save`/`saveAs` immediately start a new one). Tool transactions opened with `program.startTransaction()` therefore become entries of that batch transaction.
+Every mutation in the Ghidra backend runs inside a Ghidra transaction opened by `helpers.transaction(program, label)`, and that transaction is the *outermost* one. `Session.open()` uses pyghidra's project API (`open_project`, `consume_program`, `program_loader`) rather than `ghidra.base.project.GhidraProject`, and that API leaves no transaction open between tool calls (#18). `transaction()` ends its transaction with `commit=False` when the body raises, which rolls back that call's own changes and nothing else, and logs a WARNING naming the exception and stating that nothing from the call was kept.
 
-Ghidra's `DomainObjectDBTransaction.endEntry(id, commit=false)` marks the *whole* transaction `ABORTED`, and `DomainObjectTransactionManager.endTransaction()` rolls the database back when the outermost entry ends — regardless of the `commit` flag passed for the outermost entry. Under `GhidraProject` that means: one tool ending its transaction with `commit=False` silently discards **every change since the last save**, including changes made after the failed call, at the next `save_database` or `close_database(save=True)`. Both calls still report success. This was reproduced in issue #11.
+Consequences:
 
-Rules that follow from this:
+- **A failed tool leaves nothing behind.** `make_string`, `parse_type_declaration` and `set_function_type` were the three tools where a failure used to leave a partial change (#13); with an outermost transaction per call the change is rolled back before the error reaches the client.
+- **Saving is direct.** `Session.save()` calls `DomainFile.save()` (or, for a program that has never been saved, mirrors `GhidraProject.saveAs` by deleting any stale file of the same name in the root folder and calling `DomainFolder.createFile`). The "Unable to lock due to active transaction" failure that forced the `GhidraProject.save` detour in #1 cannot occur, because every tool transaction is closed before the call returns.
+- **Undo/redo work, one step per tool call.** The worker registers `undo`/`redo` and reports `capabilities.undo == true`. Each mutating tool call is exactly one undo step. `open_database` clears the undo history once the program is loaded (the loader and the "Initialize analysis options" transaction would otherwise be undoable, and a bare `undo` reverted the whole auto-analysis and then the program image in the #18 spike), and every analysis pass (`run_auto_analysis=True`, `analyze_database`, `reanalyze_range`) clears it again afterwards, so analysis is never an undo step (matches IDA). `save_database` also clears it: a successful save reaches `DomainObjectAdapterDB.setChanged(false)`, which calls `clearUndo`. `Session.analyze()` runs the same `AutoAnalysisManager` calls as `GhidraProject.analyze` inside one `transaction(program, "Analyze")`; it does not use `pyghidra.analyze`, which re-serialises the whole analysis log on every callback for a result we discard.
+- **Closing must release before closing the project.** `Session.close()` calls `program.release(consumer)` before `project.close()`: `DefaultProjectData.close()` defers dispose while a consumer is registered, which leaves the project `.lock` file behind.
 
-- **Mutating tools must use `helpers.transaction(program, label)`** and never call `startTransaction`/`endTransaction` directly. The context manager always ends its entry with `commit=True`, even when the body raises, and logs a warning so the partial state is visible in the worker log.
-- **Validate before mutating.** Because a failing tool can no longer roll back its own partial change, everything that can fail (address/range checks, name validation, type lookups) must happen before the first mutating call. `helpers.check_range_in_memory()` exists for the common "does this range exist in memory" case; `write_memory` and the `make_*` / `set_type` tools use it before clearing code units.
-- Undo/redo cannot be offered through this path either (see #10): `program.undo()` needs the batch transaction to be closed, so the Ghidra worker does not register `undo`/`redo` and reports `capabilities.undo == false`.
+Why the old rules are gone: until #18 the session opened programs through `GhidraProject`, which kept a private `"Batch Processing"` transaction open for the life of the program. Tool transactions were nested entries of that batch, and Ghidra rolls back the *whole* batch when any nested entry is aborted (`DomainObjectDBTransaction.endEntry(id, commit=false)` marks it `ABORTED`), so a single `commit=False` silently discarded every change since the last save at the next `save_database` or `close_database(save=True)` (#11). `helpers.transaction()` therefore always committed, even on error, and every tool had to validate before its first mutation because it could not roll back. Undo was impossible for the same reason (#10). None of that applies to an outermost transaction.
+
+Validation still goes before the first mutation. It is no longer a data-safety requirement, but a raise before the mutation gives a clear error (`NotFound: Address ... is not in memory` instead of a Java exception from deep inside a command), avoids the WARNING an abort logs, and keeps the undo history free of no-op entries. `helpers.check_range_in_memory()` exists for the common "does this range exist in memory" case, and `tests/test_ghidra_transaction_hygiene.py` enforces the ordering statically. Never call `startTransaction`/`endTransaction` directly; use `helpers.transaction()` so the abort-and-log behaviour is uniform.
 
 ### Address resolution
 
@@ -330,7 +333,7 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 |--------|------|
 | `backend.py` | `GhidraBackend` — implements the `Backend` protocol; registers `open_database`, Ghidra-specific LLM instructions, and target listing |
 | `server.py` | Worker entry point (`re-mcp-ghidra-worker`) — creates `GhidraServer` (a `BackendServer` subclass), auto-discovers and registers all tool modules from `tools/`, runs stdio transport |
-| `session.py` | Database session singleton (per worker), `require_open` decorator |
+| `session.py` | Database session singleton (per worker), `require_open` decorator; opens programs through the pyghidra project API (no standing transaction), saves via `DomainFile.save`, runs auto-analysis in one transaction (`analyze()`) and clears the undo history after open and analysis |
 | `exceptions.py` | `GhidraError(BackendError)` — Ghidra-specific structured error type |
 | `helpers.py` | Address parsing, formatting, pagination, resolution helpers, MCP annotation presets, `Annotated` parameter type aliases, `call_ghidra` main-thread dispatch |
 | `models.py` | Re-exports shared Pydantic models from `re_mcp.models` for convenient single-source imports |
@@ -461,7 +464,7 @@ The process is the same for both backends. Using IDA as an example:
 8. Add any new third-party imports to the `known-third-party` list in `pyproject.toml` under `[tool.ruff.lint.isort]`
 9. Ideally add the tool to both backends with matching names and parameters for portability
 
-For the Ghidra backend, the same steps apply under `packages/re-mcp-ghidra/`. Ghidra mutating tools must wrap their changes in `helpers.transaction(program, label)` and validate every input before the first mutating call; never call `program.endTransaction()` directly (see [Ghidra transactions](#ghidra-transactions)).
+For the Ghidra backend, the same steps apply under `packages/re-mcp-ghidra/`. Ghidra mutating tools must wrap their changes in `helpers.transaction(program, label)`; a failure rolls back that call's own changes because the session keeps no standing transaction. Validate inputs before the first mutation anyway so errors are clear and the undo history stays clean; never call `program.endTransaction()` directly (see [Ghidra transactions](#ghidra-transactions)).
 
 ## IDA 9 API Notes
 

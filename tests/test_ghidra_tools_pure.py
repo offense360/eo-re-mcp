@@ -47,20 +47,34 @@ def _tool_names(tools_dir: pathlib.Path) -> set[str]:
     return names
 
 
-def test_ghidra_does_not_register_undo_redo():
-    """Ghidra cannot undo/redo under GhidraProject's batch transaction (#10).
+def test_ghidra_registers_undo_redo():
+    """Ghidra can undo/redo again once no standing transaction is held (#18).
 
-    A tool that can never succeed must not be registered at all: capability
-    flags do not affect tool exposure, so an always-failing tool would stay
-    visible and invite repeated calls.
+    The tools were removed in #10 because ``GhidraProject``'s batch transaction
+    made ``canUndo()`` permanently false, and a tool that can never succeed
+    must not be registered at all. With the pyghidra project API each tool
+    transaction is one undo step, so the tools are back.
     """
     names = _tool_names(GHIDRA_TOOLS_DIR)
     assert names, "no @mcp.tool-decorated functions found — parser regression?"
-    assert "undo" not in names
-    assert "redo" not in names
+    assert "undo" in names
+    assert "redo" in names
 
 
 def test_ida_still_registers_undo_redo():
     """IDA keeps its undo/redo tools; only the Ghidra backend drops them."""
     names = _tool_names(IDA_TOOLS_DIR)
     assert {"undo", "redo"} <= names
+
+
+def test_analysis_tools_run_analysis_through_the_session():
+    """``analyze_database`` / ``reanalyze_range`` call ``session.analyze()`` (#18).
+
+    Neither ``GhidraProject.analyze`` (opens no transaction of its own) nor
+    ``pyghidra.analyze`` (quadratic log accumulation) may be used.
+    """
+    source = (GHIDRA_TOOLS_DIR / "analysis.py").read_text(encoding="utf-8")
+    assert "session.analyze(" in source
+    assert "GhidraProject" not in source
+    assert "pyghidra.analyze" not in source
+    assert "import pyghidra" not in source

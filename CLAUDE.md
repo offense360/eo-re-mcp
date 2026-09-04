@@ -52,7 +52,7 @@ Key points for editing:
 7. Return Pydantic model instances on success; raise the backend's error type on failure (do not return error dicts)
 8. Add any new third-party imports to the `known-third-party` list in `pyproject.toml` under `[tool.ruff.lint.isort]`
 9. Ideally add the tool to both backends with matching names and parameters for portability
-10. Ghidra mutating tools must use `helpers.transaction(program, label)` and validate inputs before the first mutation; never call `endTransaction` directly (a nested abort rolls back every change since the last save, see `docs/architecture.md` → Ghidra transactions)
+10. Ghidra mutating tools must wrap changes in `helpers.transaction(program, label)`; a failure rolls back that call's own changes (the session keeps no standing transaction, see `docs/architecture.md` → Ghidra transactions). Validate inputs before the first mutation anyway so errors are clear and the undo history stays clean; never call `endTransaction` directly.
 
 ## IDA 9 API
 
