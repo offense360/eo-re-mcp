@@ -79,6 +79,23 @@ class TestTransaction:
         assert "Patch bytes" in messages[0]
         assert "#11" in messages[0]
 
+    def test_failure_warning_names_exception_and_states_what_was_kept(self, caplog):
+        """#14: the WARNING must say which exception fired and that prior
+        mutations were kept, so an operator can tell a partial change from
+        a clean failure without reading the tool source."""
+        program = FakeProgram()
+        with (
+            caplog.at_level("WARNING", logger="re_mcp_ghidra.helpers"),
+            pytest.raises(ValueError),
+            transaction(program, "Patch bytes"),
+        ):
+            raise ValueError("boom")
+        messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(messages) == 1
+        assert "ValueError" in messages[0]
+        assert "boom" in messages[0]
+        assert "kept" in messages[0]
+
     def test_success_logs_nothing(self, caplog):
         program = FakeProgram()
         with (

@@ -88,10 +88,14 @@ def transaction(program, label: str):
     tx_id = program.startTransaction(label)
     try:
         yield
-    except Exception:
+    except Exception as exc:
         log.warning(
-            "Transaction %r failed; committing partial state to avoid batch rollback (#11)",
+            "Transaction %r raised %s: %s; the transaction was committed (nested abort "
+            "would roll back the whole batch, #11). Any mutation made before the error "
+            "is kept.",
             label,
+            type(exc).__name__,
+            exc,
         )
         raise
     finally:

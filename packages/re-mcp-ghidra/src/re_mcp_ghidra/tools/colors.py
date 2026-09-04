@@ -130,6 +130,14 @@ def register(mcp: FastMCP) -> None:
             except Exception:
                 pass  # Property not set
 
+        # Validate before the transaction: a single-address request needs a
+        # code unit to attach the property to (#14).
+        if addresses is None and cu is None:
+            raise GhidraError(
+                f"No code unit at {format_address(addr.getOffset())}",
+                error_type="NotFound",
+            )
+
         try:
             with transaction(program, "Set color"):
                 if addresses is not None:
@@ -143,11 +151,6 @@ def register(mcp: FastMCP) -> None:
                             with contextlib.suppress(Exception):
                                 unit.removeProperty(_COLOR_PROPERTY)
                 else:
-                    if cu is None:
-                        raise GhidraError(
-                            f"No code unit at {format_address(addr.getOffset())}",
-                            error_type="NotFound",
-                        )
                     if new_color is not None:
                         cu.setProperty(_COLOR_PROPERTY, new_color)
                     else:

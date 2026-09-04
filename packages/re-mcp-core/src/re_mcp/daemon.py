@@ -105,7 +105,7 @@ def read_state(state_dir_name: str = "re-mcp") -> dict | None:
     """Read and validate the daemon state file.  Returns None if unusable."""
     path = _state_file(state_dir_name)
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
     if not isinstance(data, dict):

@@ -83,20 +83,31 @@ def register(mcp: FastMCP) -> None:
             )
 
         try:
+            # Validate before the transaction (#14): data needs nothing more,
+            # an instruction needs a scalar operand, anything else is rejected.
+            scalar = None
+            if isinstance(cu, Data):
+                pass
+            elif isinstance(cu, Instruction):
+                scalar = cu.getScalar(operand_num)
+                if scalar is None:
+                    raise GhidraError(
+                        f"Operand {operand_num} at {format_address(addr.getOffset())} "
+                        "has no scalar value",
+                        error_type="InvalidArgument",
+                    )
+            else:
+                raise GhidraError(
+                    f"Unsupported code unit type at {format_address(addr.getOffset())}",
+                    error_type="InvalidArgument",
+                )
+
             with transaction(program, "Set operand format"):
                 if isinstance(cu, Data):
                     cu.setLong("format", _DATA_FORMAT_VALUES[display_format])
-                elif isinstance(cu, Instruction):
+                else:
                     # Instructions use equates to change operand display format
                     from ghidra.app.cmd.equate import SetEquateCmd  # noqa: PLC0415
-
-                    scalar = cu.getScalar(operand_num)
-                    if scalar is None:
-                        raise GhidraError(
-                            f"Operand {operand_num} at {format_address(addr.getOffset())} "
-                            "has no scalar value",
-                            error_type="InvalidArgument",
-                        )
 
                     equate_name = _format_scalar(scalar.getUnsignedValue(), display_format)
                     cmd = SetEquateCmd(equate_name, addr, operand_num, scalar.getValue())
@@ -105,11 +116,6 @@ def register(mcp: FastMCP) -> None:
                             f"Failed to set equate: {cmd.getStatusMsg()}",
                             error_type="SetOperandFailed",
                         )
-                else:
-                    raise GhidraError(
-                        f"Unsupported code unit type at {format_address(addr.getOffset())}",
-                        error_type="InvalidArgument",
-                    )
         except GhidraError:
             raise
         except Exception as e:

@@ -80,7 +80,7 @@ def _collect_ida_dispatch_names(helpers_path: Path) -> set[str]:
     """Parse helpers.py and return names of @ida_dispatch-decorated functions."""
     if not helpers_path.exists():
         return set()
-    source = helpers_path.read_text()
+    source = helpers_path.read_text(encoding="utf-8")
     try:
         tree = ast.parse(source, filename=str(helpers_path))
     except SyntaxError:
@@ -244,7 +244,7 @@ _MESSAGES = {
 
 def lint_file(filepath: Path, ida_dispatch_names: set[str]) -> list[str]:
     """Lint a single file, returning a list of error messages."""
-    source = filepath.read_text()
+    source = filepath.read_text(encoding="utf-8")
     try:
         tree = ast.parse(source, filename=str(filepath))
     except SyntaxError:
