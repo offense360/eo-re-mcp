@@ -18,6 +18,7 @@ import signal
 
 import ida_auto
 import ida_hexrays
+import ida_ida
 import ida_idp
 import ida_kernwin
 import idapro
@@ -251,6 +252,33 @@ class Session:
 
         log.info("Closed database: %s (saved=%s)", path, save)
         return {"status": "closed", "path": path, "saved": save}
+
+    def analyze(self) -> bool:
+        """Run auto-analysis to completion. Returns True when the program was re-planned.
+
+        If nothing is queued (the database was already analyzed, or it was saved
+        by a version that emptied the queue, #23) an explicit call still has to
+        perform a full pass, so the whole program is re-planned first.  A fresh
+        open leaves the queue full, so the first ``wait_for_analysis`` pass runs
+        without re-planning.  ``enable_auto`` is cheap and idempotent; the
+        analyzer may still be off after ``close()`` or an open with
+        ``run_auto_analysis=False``.
+
+        Raises :class:`IDAError` when no database is open.
+        """
+        if not self.is_open():
+            raise IDAError(
+                "No database is open. Use open_database first.",
+                error_type="NoDatabase",
+            )
+        replanned = False
+        if ida_auto.auto_is_ok():
+            ida_auto.plan_range(ida_ida.inf_get_min_ea(), ida_ida.inf_get_max_ea())
+            replanned = True
+        ida_auto.enable_auto(True)
+        ida_auto.auto_wait()
+        log.info("Auto-analysis complete (replanned=%s)", replanned)
+        return replanned
 
     def require_open(self, fn):
         """Decorator that raises :class:`IDAError` if no database is open."""

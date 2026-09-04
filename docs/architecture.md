@@ -127,6 +127,8 @@ Key behaviors:
 IDA-specific session behaviors:
 - The decorator clears IDA's cancellation flag before each call and catches `Cancelled` exceptions, re-raising them as `IDAError`
 - Signal handlers: `SIGTERM` raises `SystemExit` (triggers shutdown cleanup and save), `SIGINT` first press sets IDA's cancellation flag / second press escalates to shutdown, `SIGUSR1` sets the cancellation flag without escalation (cooperative cancellation from supervisor)
+- `close()` disables the analyzer but leaves the auto-analysis queue intact: a database saved before analysis ran must still report `auto_is_ok()==False` on reopen so `analyzed` stays honest (#23). Nothing is in flight at close time because auto-analysis only advances inside `auto_wait()`, so `close_database` does not block.
+- `Session.analyze()` (what `analyze_database` calls) re-plans the whole program with `plan_range(inf_get_min_ea(), inf_get_max_ea())` when `auto_is_ok()` is already true, so an explicit call always performs a full pass — including on a database whose queue was emptied by a version affected by #23. A fresh open has a full queue and runs without re-planning.
 
 ### Multi-database supervisor and provider architecture
 

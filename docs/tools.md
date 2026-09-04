@@ -49,7 +49,7 @@ Core database lifecycle management.
 | `get_fileregion_offset` | Map a virtual address to a file offset (IDA). |
 | `get_elf_debug_file_directory` | Get the ELF debug file directory path (IDA). |
 | `reload_file` | Reload byte values from the input file (IDA). |
-| `wait_for_analysis` | Wait for one or more databases to finish opening, run auto-analysis once if it has not run yet, and block until the database is ready for tool calls. The first call on a freshly opened database therefore takes as long as analysis; other tools on that database are rejected while it runs. Already-analyzed databases (`analyzed=True` in `list_databases`) return immediately without re-analysis; use `analyze_database` to force a pass. Call this after `open_database`. Pass `databases` (a list) to wait for several at once — returns as soon as at least one is ready. |
+| `wait_for_analysis` | Wait for one or more databases to finish opening, run auto-analysis once if it has not run yet, and block until the database is ready for tool calls. The first call on a freshly opened database therefore takes as long as analysis; other tools on that database are rejected while it runs. Already-analyzed databases (`analyzed=True` in `list_databases`) return immediately without re-analysis; use `analyze_database` to force a pass. Call this after `open_database`. Pass `databases` (a list) to wait for several at once — returns as soon as at least one is ready. A database saved unanalyzed by a version affected by #23 reports `analyzed=True` on reopen; call `analyze_database` once to repair it. |
 | `list_targets` | List available processor modules, loaders, and language/compiler options. Returns names that can be passed to `open_database`. |
 
 ## Functions
@@ -395,7 +395,7 @@ Auto-analysis control, problems, fixups, exception handlers, and segment registe
 
 | Tool | Description |
 |------|-------------|
-| `analyze_database` | Run auto-analysis to completion on an open database and return post-analysis statistics. `wait_for_analysis` calls this automatically the first time; call it directly to re-analyze after patches or type changes. Blocks other tools on the database while running. If analysis is already running, waits for it and returns the same result instead of starting a second pass. |
+| `analyze_database` | Run auto-analysis to completion on an open database and return post-analysis statistics. `wait_for_analysis` calls this automatically the first time; call it directly to re-analyze after patches or type changes. Blocks other tools on the database while running. If analysis is already running, waits for it and returns the same result instead of starting a second pass. On IDA an explicit call always performs a full pass: if nothing is queued (already analyzed, or a database saved by a version affected by #23) the whole program is re-planned first, so it costs about as much as the initial analysis. |
 | `reanalyze_range` | Trigger auto-analysis on an address range. |
 | `get_analysis_problems` | List analysis problems and conflicts. Paginated. |
 | `get_fixups` | List relocation/fixup records in an address range. Paginated (IDA). |
