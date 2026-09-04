@@ -66,6 +66,20 @@ evidence. Status as of 2026-09-04.
 | [#19](https://github.com/offense360/eo-re-mcp/issues/19) | IDA | Error messages embed paths with `!r`, doubling backslashes on Windows; also fails 6 `test_exceptions.py` tests. Fix the code, keep the tests. | Open |
 | [#20](https://github.com/offense360/eo-re-mcp/issues/20) | tests | Two proxy tests are Windows-hostile (`signal.SIGKILL` in a Windows-targeted test, unescaped path regex) | Open |
 
+### Continuous integration on the fork
+
+The upstream `ci.yml` (reuse, lint, test, build on `ubuntu-latest`) is kept
+as-is, with `workflow_dispatch` added so a Linux run can be requested for any
+branch:
+
+```
+gh workflow run CI -R offense360/eo-re-mcp --ref <branch>
+```
+
+Linux is the reference for the full test suite: as of 9e364b6 the `test` job
+reports 792 passed, 0 skipped. Windows is the development platform; its
+baseline is documented below.
+
 ### Known constraints of this environment
 
 - Only the Ghidra backend (12.1.2) can be exercised at runtime here; IDA-only
