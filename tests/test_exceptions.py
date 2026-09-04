@@ -930,7 +930,7 @@ def test_path_error_messages_keep_backslashes_single(tmp_path):
     assert "\\\\" not in msg
 
     # check_fat_binary needs a real, non-fat file to reach its message.
-    name = "thin.bin" if os.sep == "\\" else "dir\thin.bin"
+    name = "thin.bin" if os.sep == "\\" else "dir\\thin.bin"
     thin = tmp_path / name
     thin.write_bytes(b"\x7fELF" + b"\x00" * 32)
     thin_path = str(thin)
