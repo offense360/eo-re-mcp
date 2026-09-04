@@ -17,6 +17,7 @@ import logging
 import os
 import shutil
 import signal
+import time
 
 from re_mcp_ghidra.exceptions import GhidraError
 
@@ -441,6 +442,45 @@ class Session:
 # Module-level singleton
 session = Session()
 
+# Whether this worker process holds a reference on the script bundle host (#22).
+_bundle_host_ready = False
+
+
+def _ensure_bundle_host() -> None:
+    """Acquire the script bundle host once per worker process (#22).
+
+    Headless pyghidra never initialises ``GhidraScriptUtil.bundleHost``, so
+    script-based analyzers (``WindowsResourceReferenceAnalyzer.runScript`` →
+    ``GhidraScriptUtil.findScriptByName``) fail with a NullPointerException
+    and are silently skipped.  ``acquireBundleHostReference()`` (Ghidra 12.1.2
+    ``GhidraScriptUtil.java:440``) starts the OSGi framework and registers the
+    script directories the first time the reference count goes 0 → 1;
+    ``releaseBundleHostReference()`` (``:451``) disposes it on 1 → 0.  A worker
+    owns one program for its whole life, so it takes the reference once and
+    never releases it, instead of paying the start/stop cost on every
+    analysis pass the way ``pyghidra.analyze`` does.  ``initialize()`` itself
+    (``:70``) throws when called twice, so only the reference-counted API is
+    used.
+
+    A failure is logged and analysis continues without script-based
+    analyzers; the flag stays False so the next pass retries.
+    """
+    global _bundle_host_ready  # noqa: PLW0603
+    if _bundle_host_ready:
+        return
+    from ghidra.app.script import GhidraScriptUtil  # noqa: PLC0415
+
+    started = time.perf_counter()
+    try:
+        GhidraScriptUtil.acquireBundleHostReference()
+    except Exception as exc:
+        log.warning(
+            "Script bundle host unavailable (%s); script-based analyzers will be skipped", exc
+        )
+        return
+    _bundle_host_ready = True
+    log.info("Script bundle host initialised in %.2f s", time.perf_counter() - started)
+
 
 def _run_analysis(program, *, mark_analyzed: bool) -> None:
     """Body of :meth:`Session.analyze` for a program not yet owned by the session.
@@ -458,6 +498,7 @@ def _run_analysis(program, *, mark_analyzed: bool) -> None:
 
     from re_mcp_ghidra.helpers import transaction  # noqa: PLC0415
 
+    _ensure_bundle_host()
     with transaction(program, "Analyze"):
         mgr = AutoAnalysisManager.getAnalysisManager(program)
         mgr.initializeOptions()

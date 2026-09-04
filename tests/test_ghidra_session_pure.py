@@ -20,12 +20,14 @@ auto-analysis is run inline by ``Session.analyze()`` inside one
 
 from __future__ import annotations
 
+import logging
 import pathlib
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
+import re_mcp_ghidra.session as session_module
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.session import Session
 
@@ -244,6 +246,9 @@ def ghidra_stubs(monkeypatch):
         # and an ordered call log.
         "is_analyzed": False,
         "analysis_error": None,
+        # GhidraScriptUtil stub (#22): an exception acquireBundleHostReference
+        # should raise, or None.
+        "bundle_host_error": None,
         "calls": [],
     }
 
@@ -325,6 +330,20 @@ def ghidra_stubs(monkeypatch):
         def getLanguageService():
             return state.get("language_service") or MagicMock(name="LanguageService")
 
+    class GhidraScriptUtil:
+        """Reference-counted script bundle host (Ghidra 12.1.2
+        ``GhidraScriptUtil.java:440`` / ``:451``) — records acquire/release (#22)."""
+
+        @staticmethod
+        def acquireBundleHostReference():
+            state["calls"].append(("acquireBundleHost",))
+            if state["bundle_host_error"] is not None:
+                raise state["bundle_host_error"]
+
+        @staticmethod
+        def releaseBundleHostReference():
+            state["calls"].append(("releaseBundleHost",))
+
     class JavaObject:
         """Stand-in for ``java.lang.Object`` used as the session consumer."""
 
@@ -337,6 +356,7 @@ def ghidra_stubs(monkeypatch):
         "ghidra.app.plugin.core.analysis": _make_module(
             "ghidra.app.plugin.core.analysis", AutoAnalysisManager=AutoAnalysisManager
         ),
+        "ghidra.app.script": _make_module("ghidra.app.script", GhidraScriptUtil=GhidraScriptUtil),
         "ghidra.program": _make_module("ghidra.program"),
         "ghidra.program.flatapi": _make_module(
             "ghidra.program.flatapi", FlatProgramAPI=FlatProgramAPI
@@ -356,6 +376,9 @@ def ghidra_stubs(monkeypatch):
     }
     for name, mod in modules.items():
         monkeypatch.setitem(sys.modules, name, mod)
+    # The bundle host is acquired once per worker process (#22); start every
+    # test from the "not yet acquired" state.
+    monkeypatch.setattr(session_module, "_bundle_host_ready", False, raising=False)
     return state
 
 
@@ -909,6 +932,89 @@ def test_open_with_run_auto_analysis_clears_undo_once_at_the_end(ghidra_stubs, e
     assert len(program.clear_undo_calls) == 1
     names = [c[0] for c in ghidra_stubs["calls"]]
     assert names.index("mark") < names.index("clearUndo")
+
+
+# ---------------------------------------------------------------------------
+# script bundle host (#22)
+# ---------------------------------------------------------------------------
+
+
+def _bundle_host_names(calls):
+    keep = {"acquireBundleHost", "releaseBundleHost", "start", "end"}
+    return [c[0] for c in calls if c[0] in keep]
+
+
+def test_analyze_acquires_bundle_host_once_per_process(ghidra_stubs, existing_project):
+    """#22: ``GhidraScriptUtil.bundleHost`` is null in a headless worker, so
+    script-based analyzers (WindowsResourceReferenceAnalyzer) NPE and are
+    skipped.  The worker acquires the bundle host reference once, before the
+    first "Analyze" transaction, and never releases it (the process owns one
+    program for its whole life)."""
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    session, _ = _open_existing(ghidra_stubs, existing_project, program)
+    ghidra_stubs["calls"].clear()
+
+    session.analyze()
+    session.analyze()
+
+    names = _bundle_host_names(ghidra_stubs["calls"])
+    assert names.count("acquireBundleHost") == 1
+    assert names.count("releaseBundleHost") == 0
+    assert names.index("acquireBundleHost") < names.index("start")
+    assert program.start_transaction_calls == ["Analyze", "Analyze"]
+    assert session_module._bundle_host_ready is True
+
+
+def test_open_with_run_auto_analysis_acquires_bundle_host(ghidra_stubs, existing_project):
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    ghidra_stubs["project"] = FakeProject(ghidra_stubs["calls"])
+    ghidra_stubs["consume_result"] = program
+
+    Session().open(str(existing_project), run_auto_analysis=True)
+
+    names = _bundle_host_names(ghidra_stubs["calls"])
+    assert names.count("acquireBundleHost") == 1
+    assert names.count("releaseBundleHost") == 0
+    assert names.index("acquireBundleHost") < names.index("start")
+
+
+def test_bundle_host_failure_is_logged_and_analysis_continues(
+    ghidra_stubs, existing_project, caplog
+):
+    """A bundle host that cannot start must not block analysis: one WARNING,
+    the pass runs as before, and the next analysis retries the acquire."""
+    program = FakeProgram(calls=ghidra_stubs["calls"])
+    session, _ = _open_existing(ghidra_stubs, existing_project, program)
+    ghidra_stubs["calls"].clear()
+    ghidra_stubs["bundle_host_error"] = RuntimeError("OSGi framework failed")
+
+    with caplog.at_level(logging.WARNING, logger="re_mcp_ghidra.session"):
+        session.analyze()
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.name == "re_mcp_ghidra.session"
+    ]
+    assert len(warnings) == 1
+    assert "OSGi framework failed" in warnings[0].getMessage()
+    assert "script-based analyzers" in warnings[0].getMessage()
+    assert _analysis_names(ghidra_stubs["calls"]) == [
+        "start",
+        "getAnalysisManager",
+        "initializeOptions",
+        "reAnalyzeAll",
+        "startAnalysis",
+        "end",
+        "mark",
+        "clearUndo",
+    ]
+    assert program.end_transaction_calls == [(99, True)]
+    assert session_module._bundle_host_ready is False
+
+    session.analyze()
+
+    assert _bundle_host_names(ghidra_stubs["calls"]).count("acquireBundleHost") == 2
 
 
 def test_no_pyghidra_analyze_reference():
