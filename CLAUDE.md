@@ -15,6 +15,8 @@ uv run re-mcp-ghidra                 # Run Ghidra backend (direct stdio mode)
 uv run ruff check packages/          # Lint
 uv run ruff format packages/         # Format
 uv run ruff check --fix packages/    # Lint with auto-fix
+uv run pre-commit install            # Install git hooks (reuse, ruff, ida-threading, pytest)
+uv run pre-commit run --all-files    # Run the whole hook chain without committing
 ```
 
 Pre-commit hooks run REUSE compliance checks, ruff lint (with `--fix --exit-non-zero-on-fix`), ruff format, idalib threading lint (`scripts/lint_ida_threading.py`), and pytest on commit.

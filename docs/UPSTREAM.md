@@ -69,9 +69,14 @@ evidence. Status as of 2026-09-04.
 - Only the Ghidra backend (12.1.2) can be exercised at runtime here; IDA-only
   changes are reviewed statically against the IDA SDK headers and IDAPython
   sources. Issues #6 and #12 wait on an IDA installation.
-- The Windows test baseline has 15 platform-specific failures (POSIX signals,
-  symlinks, `chmod`, macOS/Linux state directories). Any other failure is a
-  regression.
+- Windows test baseline: 7 POSIX-only tests (SIGKILL, `fchmod` mode bits,
+  darwin/linux state-dir resolution, POSIX spawn branch, loop signal handlers)
+  are skipped via the `posix_only` marker / `skipif(sys.platform == "win32")`
+  in `tests/conftest.py`; they run on Linux CI. 8 further Windows failures are
+  test defects, not platform semantics (Windows path quoting in
+  `test_exceptions.py` error-message assertions, an unescaped path passed as a
+  regex, a `signal.SIGKILL` reference in a Windows-targeted test) and are
+  tracked in #16. Any other failure is a regression.
 
 ## Syncing with upstream
 

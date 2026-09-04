@@ -130,6 +130,7 @@ class TestStopDaemon:
         with patch("os.kill", side_effect=OSError):
             _stop_daemon({"pid": 1234})
 
+    @pytest.mark.posix_only(reason="uses signal.SIGKILL, which does not exist on Windows")
     def test_escalates_to_sigkill(self, monkeypatch):
         monkeypatch.setattr("re_mcp.proxy.IS_WINDOWS", False)
         kill_calls = []
@@ -285,6 +286,10 @@ class TestEnsureDaemon:
 
 
 class TestSpawnDaemon:
+    @pytest.mark.posix_only(
+        reason="asserts the POSIX immediate-exit branch of _spawn_daemon; on Windows a "
+        "launcher/shim exit is tolerated and the state file is awaited instead"
+    )
     def test_immediate_exit_raises(self, monkeypatch):
         mock_proc = MagicMock()
         mock_proc.poll.return_value = 1

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 
 import pytest
 from re_mcp.daemon import (
@@ -44,6 +45,9 @@ class TestWriteState:
             "version": "1.0.0",
         }
 
+    @pytest.mark.posix_only(
+        reason="asserts the 0o600 mode set via os.fchmod; Windows has no POSIX mode bits"
+    )
     def test_restricted_permissions(self, tmp_path, monkeypatch):
         monkeypatch.setattr("re_mcp.daemon._state_file", lambda *a, **kw: tmp_path / "daemon.json")
         write_state(pid=1, host="127.0.0.1", port=1, token="t", version="v")
@@ -203,17 +207,32 @@ class TestIsLoopback:
 
 
 class TestStateDir:
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="tests darwin/linux state-dir resolution; pathlib is WindowsPath (backslashes) "
+        "regardless of the patched sys.platform",
+    )
     def test_darwin(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "darwin")
         monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/Users/test"))
         assert str(_state_dir("re-mcp-ida")) == "/Users/test/Library/Application Support/re-mcp-ida"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="tests darwin/linux state-dir resolution; pathlib is WindowsPath (backslashes) "
+        "regardless of the patched sys.platform",
+    )
     def test_linux_default(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         monkeypatch.delenv("XDG_STATE_HOME", raising=False)
         monkeypatch.setattr("pathlib.Path.home", lambda: __import__("pathlib").Path("/home/test"))
         assert str(_state_dir("re-mcp-ida")) == "/home/test/.local/state/re-mcp-ida"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="tests darwin/linux state-dir resolution; pathlib is WindowsPath (backslashes) "
+        "regardless of the patched sys.platform",
+    )
     def test_linux_xdg(self, monkeypatch):
         monkeypatch.setattr("sys.platform", "linux")
         monkeypatch.setenv("XDG_STATE_HOME", "/custom/state")
