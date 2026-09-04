@@ -18,7 +18,6 @@ import signal
 
 import ida_auto
 import ida_hexrays
-import ida_idaapi
 import ida_idp
 import ida_kernwin
 import idapro
@@ -237,12 +236,12 @@ class Session:
 
         path = self._current_path
         try:
-            # Disable auto-analysis and drain all queues so that
-            # close_database does not hang waiting for pending work.
+            # Stop the analyzer from picking up work while we close.  The
+            # queue is left intact on purpose: a saved database must still
+            # report auto_is_ok()==False until analysis really ran (#23).
+            # Auto-analysis only advances inside auto_wait(), so nothing is
+            # in flight here and close_database does not block (#23 P1).
             ida_auto.enable_auto(False)
-            for name in dir(ida_auto):
-                if name.startswith("AU_") and name != "AU_NONE":
-                    ida_auto.auto_unmark(0, ida_idaapi.BADADDR, getattr(ida_auto, name))
             idapro.close_database(save)
         except Exception as exc:
             log.exception("Error closing database %s", path)
