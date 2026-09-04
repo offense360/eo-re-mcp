@@ -146,15 +146,19 @@ def register(mcp: FastMCP) -> None:
         from java.util import ArrayList  # noqa: PLC0415
 
         try:
-            with transaction(program, "Set function type"):
+            # CParser can add types to the DataTypeManager while parsing (#13),
+            # so the parse runs in its own transaction; the shape check on the
+            # result is pure validation and stays outside any block (#14).
+            with transaction(program, "Parse function type"):
                 parsed_dt = parser.parse(decl)
 
-                if not isinstance(parsed_dt, FunctionDefinitionDataType):
-                    raise GhidraError(
-                        f"Parsed type is not a function definition: {type_string!r}",
-                        error_type="InvalidArgument",
-                    )
+            if not isinstance(parsed_dt, FunctionDefinitionDataType):
+                raise GhidraError(
+                    f"Parsed type is not a function definition: {type_string!r}",
+                    error_type="InvalidArgument",
+                )
 
+            with transaction(program, "Set function type"):
                 # Build the parameter list first: ParameterImpl validates names,
                 # so a bad declaration fails before the function is touched.
                 java_params = ArrayList()

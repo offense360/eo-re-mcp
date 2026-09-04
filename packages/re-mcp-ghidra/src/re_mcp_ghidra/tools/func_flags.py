@@ -94,24 +94,19 @@ def register(mcp: FastMCP) -> None:
             )
 
         try:
-            with transaction(program, "Set function flags"):
-                if "thunk" in changed:
-                    if changed["thunk"]:
-                        # Setting as thunk requires a thunked function address.
-                        # If the function is not already a thunk, try to identify
-                        # the target from the function body (first call).
-                        if not func.isThunk():
-                            # Cannot blindly set thunk without a target; raise error
-                            raise GhidraError(
-                                "Cannot mark as thunk: no thunk target identified. "
-                                "Use Ghidra's auto-analysis or set the thunked function manually.",
-                                error_type="InvalidArgument",
-                            )
-                    else:
-                        # Ghidra does not have a direct unsetThunk.
-                        # We skip this silently if it's not a thunk.
-                        pass
+            # Validate before the transaction (#14). Setting as thunk requires
+            # a thunked function address; without one we cannot blindly mark
+            # it, so only an existing thunk passes (and needs no change).
+            # Ghidra has no direct unsetThunk either, so thunk=False is a
+            # silent no-op.
+            if changed.get("thunk") and not func.isThunk():
+                raise GhidraError(
+                    "Cannot mark as thunk: no thunk target identified. "
+                    "Use Ghidra's auto-analysis or set the thunked function manually.",
+                    error_type="InvalidArgument",
+                )
 
+            with transaction(program, "Set function flags"):
                 if "noreturn" in changed:
                     func.setNoReturn(changed["noreturn"])
 
