@@ -59,8 +59,8 @@ evidence. Status as of 2026-09-04.
 | [#11](https://github.com/offense360/eo-re-mcp/issues/11) | Ghidra | Confirmed at runtime: an aborted nested tool transaction marked `GhidraProject`'s batch transaction ABORTED and `save` rolled back every change since the last save. All mutations now go through `helpers.transaction()`, which never aborts; validation moved ahead of mutation in six tools. | Fixed (c6d6b91) |
 | [#12](https://github.com/offense360/eo-re-mcp/issues/12) | IDA | Verify #8's `analyzed` signal (`sidecar_exists and auto_is_ok()`) on a machine with IDA | Open, needs IDA |
 | [#13](https://github.com/offense360/eo-re-mcp/issues/13) | Ghidra | Three tools can still leave a partial change when they fail after their first mutation (residual from #11) | Open |
-| [#14](https://github.com/offense360/eo-re-mcp/issues/14) | Ghidra | `transaction()` WARNING fires on pure validation failures; move validation ahead of the `with` block | Open |
-| [#15](https://github.com/offense360/eo-re-mcp/issues/15) | scripts | `lint_ida_threading.py` reads sources without an encoding | Open |
+| [#14](https://github.com/offense360/eo-re-mcp/issues/14) | Ghidra | `transaction()` WARNING fired on pure validation failures. Validation moved ahead of the `with` block in four tools, warning now names the exception, and an AST test (`tests/test_ghidra_transaction_hygiene.py`) guards the pattern with an explicit allow-list for the #13 sites. | Fixed (32e9490) |
+| [#15](https://github.com/offense360/eo-re-mcp/issues/15) | scripts | Source/config files read with the locale codec in `lint_ida_threading.py`, both backends' config loaders and `daemon.py`; now UTF-8 | Fixed (32e9490) |
 | [#16](https://github.com/offense360/eo-re-mcp/issues/16) | tooling | pre-commit chain cannot pass on Windows (15 platform-specific pytest failures, `reuse` not installed) | Open |
 | [#17](https://github.com/offense360/eo-re-mcp/issues/17) | Ghidra | Warn when a configured Ghidra install dir does not exist instead of failing with `SpawnFailed` | Open |
 
