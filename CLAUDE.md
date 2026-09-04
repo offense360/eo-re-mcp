@@ -15,6 +15,7 @@ uv run re-mcp-ghidra                 # Run Ghidra backend (direct stdio mode)
 uv run ruff check packages/          # Lint
 uv run ruff format packages/         # Format
 uv run ruff check --fix packages/    # Lint with auto-fix
+gh workflow run CI -R offense360/eo-re-mcp --ref <branch>   # Linux CI run for any branch (fork)
 uv run pre-commit install            # Install git hooks (reuse, ruff, ida-threading, pytest)
 uv run pre-commit run --all-files    # Run the whole hook chain without committing
 ```
