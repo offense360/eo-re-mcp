@@ -227,11 +227,9 @@ def register(mcp: FastMCP):
             )
 
         def _run_analysis() -> AnalysisCompleteResult:
-            # Ensure the auto-analyzer is enabled — open_database may have
-            # been called with run_auto_analysis=False, leaving queued work
-            # unprocessed.  enable_auto is cheap and idempotent.
-            ida_auto.enable_auto(True)
-            ida_auto.auto_wait()
+            # Session.analyze() enables the analyzer, re-plans the whole
+            # program when nothing is queued (#23) and waits for completion.
+            session.analyze()
             return _build_result()
 
         return await call_ida(_run_analysis)
