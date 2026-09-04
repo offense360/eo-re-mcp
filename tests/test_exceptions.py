@@ -903,3 +903,40 @@ def test_append_output_flag_quotes_path_with_spaces_and_options():
     """Stem quoting composes correctly with a non-empty options string."""
     result = append_output_flag("-parm:ARMv8-A", "/tmp/my stem.arm64")
     assert result == '-parm:ARMv8-A -o"/tmp/my stem.arm64"'
+
+
+# Path quoting in error messages (#19) ---------------------------------------
+
+
+def test_path_error_messages_keep_backslashes_single(tmp_path):
+    """Paths are embedded as typed, not via repr() (which doubles backslashes).
+
+    Regression guard for #19: ``{file_path!r}`` doubled every backslash of
+    a Windows path in the message.  Runs on every platform by feeding a
+    path string that contains a backslash; on POSIX that is simply a file
+    whose name contains a backslash.
+    """
+    idb_path = r"C:\tmp\thing.i64"
+    with pytest.raises(IDAError, match="InvalidArgument") as exc:
+        reject_fat_arch_on_database(idb_path, "arm64")
+    msg = json.loads(str(exc.value))["error"]
+    assert idb_path in msg
+    assert "\\\\" not in msg
+
+    with pytest.raises(IDAError, match="InvalidArgument") as exc:
+        reject_force_new_on_database(idb_path, True)
+    msg = json.loads(str(exc.value))["error"]
+    assert idb_path in msg
+    assert "\\\\" not in msg
+
+    # check_fat_binary needs a real, non-fat file to reach its message.
+    name = "thin.bin" if os.sep == "\\" else "dir\thin.bin"
+    thin = tmp_path / name
+    thin.write_bytes(b"\x7fELF" + b"\x00" * 32)
+    thin_path = str(thin)
+    assert "\\" in thin_path
+    with pytest.raises(IDAError, match="InvalidArgument") as exc:
+        check_fat_binary(thin_path, fat_arch="arm64", force_new=False)
+    msg = json.loads(str(exc.value))["error"]
+    assert thin_path in msg
+    assert "\\\\" not in msg
