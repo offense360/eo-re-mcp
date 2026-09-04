@@ -271,9 +271,11 @@ class Session:
         """Detect which optional features are available."""
         return {
             "decompiler": True,
-            # Stage A of the #18 spike only moves the lifecycle onto the
-            # pyghidra project API.  The undo/redo tools come back in stage C.
-            "undo": False,
+            # The pyghidra project API leaves no transaction open between tool
+            # calls, so canUndo()/canRedo() work and each tool transaction is
+            # one undo step (#18).  Under GhidraProject this had to be False
+            # because the batch transaction blocked undo entirely (#10).
+            "undo": True,
         }
 
     def _tx_state(self) -> str:

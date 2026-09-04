@@ -727,11 +727,12 @@ def test_mark_program_analyzed_calls_utility(ghidra_stubs, existing_project):
 # ---------------------------------------------------------------------------
 
 
-def test_capabilities_report_no_undo(ghidra_stubs, existing_project):
-    """Ghidra sessions still advertise ``undo: False`` at this stage (#10).
+def test_capabilities_report_undo_available(ghidra_stubs, existing_project):
+    """With no standing transaction ``canUndo()`` works, so undo is offered (#18).
 
-    Stage A only moves the lifecycle onto the pyghidra project API; the
-    undo/redo tools come back in stage C of the #18 spike.
+    Under ``GhidraProject`` a "Batch Processing" transaction stayed open for
+    the life of the program and Ghidra only allows undo/redo when no
+    transaction is active, which is why the capability used to be False (#10).
     """
     program = FakeProgram(calls=ghidra_stubs["calls"])
     ghidra_stubs["project"] = FakeProject(ghidra_stubs["calls"])
@@ -740,7 +741,7 @@ def test_capabilities_report_no_undo(ghidra_stubs, existing_project):
     session, _ = _open(existing_project)
 
     assert "undo" in session.capabilities
-    assert session.capabilities["undo"] is False
+    assert session.capabilities["undo"] is True
 
 
 def test_no_ghidra_project_import(ghidra_stubs, existing_project):
