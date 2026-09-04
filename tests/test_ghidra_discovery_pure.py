@@ -15,10 +15,18 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
+from types import ModuleType
+from typing import ClassVar
+from unittest.mock import MagicMock
 
 import pytest
 import re_mcp_ghidra
+from fastmcp import Client, FastMCP
 from re_mcp_ghidra import GhidraSearch, find_ghidra_dir, locate_ghidra
+from re_mcp_ghidra.backend import GhidraBackend, _require_ghidra_dir
+from re_mcp_ghidra.exceptions import GhidraError
 
 LOGGER = "re_mcp_ghidra"
 
@@ -191,3 +199,107 @@ def test_find_ghidra_dir_matches_locate(isolated, monkeypatch):
     good = isolated.make_dir("ghidra_cfg")
     isolated.write_config(good)
     assert find_ghidra_dir() == locate_ghidra().path == good
+
+
+# ---------------------------------------------------------------------------
+# backend.py — supervisor-side pre-check
+# ---------------------------------------------------------------------------
+
+
+def test_require_ghidra_dir_raises_not_found_with_locations(isolated):
+    with pytest.raises(GhidraError) as ei:
+        _require_ghidra_dir()
+    assert ei.value.error_type == "NotFound"
+    message = ei.value.args[0]
+    assert "Checked:" in message
+    assert "GHIDRA_INSTALL_DIR" in message
+
+
+def test_register_management_tools_logs_error_when_missing(isolated, caplog):
+    with caplog.at_level(logging.ERROR, logger="re_mcp_ghidra.backend"):
+        GhidraBackend.register_management_tools(FastMCP("t"), MagicMock())
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any("Ghidra installation not found" in m for m in errors)
+
+
+@pytest.mark.asyncio
+async def test_open_database_tool_fails_before_spawning_worker(isolated):
+    mcp = FastMCP("t")
+    pool = MagicMock()
+    pool.open_database = MagicMock()  # would be awaited if reached
+    GhidraBackend.register_management_tools(mcp, pool)
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "open_database",
+            {"file_path": str(isolated.tmp_path / "bin.exe")},
+            raise_on_error=False,
+        )
+    assert result.is_error
+    text = " ".join(getattr(c, "text", "") for c in result.content)
+    assert "NotFound" in text
+    assert "Checked:" in text
+    pool.open_database.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# bootstrap() — env export and fail-fast
+# ---------------------------------------------------------------------------
+
+
+class _FakeLauncher:
+    """Stand-in for ``pyghidra.launcher.HeadlessPyGhidraLauncher``."""
+
+    instances: ClassVar[list[_FakeLauncher]] = []
+    raise_on_init: ClassVar[Exception | None] = None
+
+    def __init__(self):
+        if _FakeLauncher.raise_on_init is not None:
+            raise _FakeLauncher.raise_on_init
+        self.seen_env = os.environ.get("GHIDRA_INSTALL_DIR")
+        self.vm_args: list[str] = []
+        _FakeLauncher.instances.append(self)
+
+    def start(self):
+        pass
+
+
+@pytest.fixture
+def fake_pyghidra(monkeypatch):
+    _FakeLauncher.instances = []
+    _FakeLauncher.raise_on_init = None
+    pkg = ModuleType("pyghidra")
+    launcher = ModuleType("pyghidra.launcher")
+    launcher.HeadlessPyGhidraLauncher = _FakeLauncher
+    pkg.launcher = launcher
+    monkeypatch.setitem(sys.modules, "pyghidra", pkg)
+    monkeypatch.setitem(sys.modules, "pyghidra.launcher", launcher)
+    monkeypatch.setattr(re_mcp_ghidra, "_bootstrapped", False)
+    return _FakeLauncher
+
+
+def test_bootstrap_overrides_stale_env(isolated, monkeypatch, fake_pyghidra):
+    monkeypatch.setenv("GHIDRA_INSTALL_DIR", isolated.missing)
+    good = isolated.make_dir("ghidra_cfg")
+    isolated.write_config(good)
+    re_mcp_ghidra.bootstrap()
+    assert len(fake_pyghidra.instances) == 1
+    assert fake_pyghidra.instances[0].seen_env == good
+
+
+def test_bootstrap_not_found_raises_before_pyghidra(isolated, fake_pyghidra):
+    with pytest.raises(RuntimeError) as ei:
+        re_mcp_ghidra.bootstrap()
+    assert "Checked:" in str(ei.value)
+    assert fake_pyghidra.instances == []
+
+
+def test_bootstrap_wraps_pyghidra_rejection(isolated, monkeypatch, fake_pyghidra):
+    good = isolated.make_dir("ghidra_env")
+    monkeypatch.setenv("GHIDRA_INSTALL_DIR", good)
+    cause = ValueError("x does not exist")
+    fake_pyghidra.raise_on_init = cause
+    with pytest.raises(RuntimeError) as ei:
+        re_mcp_ghidra.bootstrap()
+    assert good in str(ei.value)
+    assert "GHIDRA_INSTALL_DIR" in str(ei.value)
+    assert ei.value.__cause__ is cause

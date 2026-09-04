@@ -275,10 +275,24 @@ def bootstrap():
 
     log.debug("Bootstrapping pyghidra...")
 
-    ghidra_dir = find_ghidra_dir()
-    if ghidra_dir:
-        os.environ.setdefault("GHIDRA_INSTALL_DIR", ghidra_dir)
-        log.debug("Using Ghidra installation at %s", ghidra_dir)
+    search = locate_ghidra()
+    if search.path is None:
+        # Our search covers both sources pyghidra would consult on its own
+        # (GHIDRA_INSTALL_DIR and lastrun), so there is nothing left for it
+        # to find — fail here with the full list instead of letting pyghidra
+        # abort the worker with a bare "GHIDRA_INSTALL_DIR is not set".
+        raise RuntimeError(
+            f"Ghidra installation not found. Checked: {search.describe()}. "
+            "Set GHIDRA_INSTALL_DIR to your Ghidra directory."
+        )
+    source = next(c.source for c in search.candidates if c.exists)
+    previous = os.environ.get("GHIDRA_INSTALL_DIR")
+    if previous is not None and previous != search.path:
+        log.info("Replacing GHIDRA_INSTALL_DIR=%s with %s", previous, search.path)
+    # Always export: pyghidra reads GHIDRA_INSTALL_DIR itself, so a stale
+    # value left in the environment would otherwise win over what we found.
+    os.environ["GHIDRA_INSTALL_DIR"] = search.path
+    log.debug("Using Ghidra installation at %s (from %s)", search.path, source)
 
     try:
         from pyghidra.launcher import HeadlessPyGhidraLauncher  # noqa: PLC0415
@@ -292,7 +306,14 @@ def bootstrap():
             "  - Place Ghidra in a standard location (/opt/ghidra_*, ~/ghidra_*)"
         ) from None
 
-    launcher = HeadlessPyGhidraLauncher()
+    try:
+        launcher = HeadlessPyGhidraLauncher()
+    except ValueError as exc:
+        # Directory exists but pyghidra's own validation failed (missing
+        # application.properties, PyGhidra module, ...).
+        raise RuntimeError(
+            f"pyghidra rejected the Ghidra installation at {search.path} (from {source}): {exc}"
+        ) from exc
     _NATIVE_ACCESS_ARG = "--enable-native-access=ALL-UNNAMED"
     if _NATIVE_ACCESS_ARG not in launcher.vm_args:
         launcher.vm_args.append(_NATIVE_ACCESS_ARG)
