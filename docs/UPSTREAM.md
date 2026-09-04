@@ -65,8 +65,8 @@ evidence. Status as of 2026-09-04.
 | [#17](https://github.com/offense360/eo-re-mcp/issues/17) | Ghidra | Install-dir discovery skipped stale sources silently and never saw pyghidra's `lastrun` fallback (the real source of the #11 "does not exist"); `bootstrap()` used `setdefault`, so a stale `GHIDRA_INSTALL_DIR` beat a valid config. `locate_ghidra()` now reports every source (lastrun added as the last one), warns on stale ones, exports the found dir unconditionally, and the supervisor fails fast with `NotFound` listing the locations checked. | Fixed (4a35129) |
 | [#19](https://github.com/offense360/eo-re-mcp/issues/19) | IDA | Error messages embed paths with `!r`, doubling backslashes on Windows; also fails 6 `test_exceptions.py` tests. Fix the code, keep the tests. | Fixed (afe39de) |
 | [#20](https://github.com/offense360/eo-re-mcp/issues/20) | tests | Two proxy tests are Windows-hostile (`signal.SIGKILL` in a Windows-targeted test, unescaped path regex) | Fixed (afe39de) |
-| [#21](https://github.com/offense360/eo-re-mcp/issues/21) | Ghidra | Stale install-dir WARNING repeats on every `locate_ghidra()` call (residual from #17) | Open, log noise |
-| [#22](https://github.com/offense360/eo-re-mcp/issues/22) | Ghidra | Headless analysis logs `GhidraScriptUtil.bundleHost` NPE; script-based analyzers silently skipped (pre-existing since upstream, surfaced by #18) | Open |
+| [#21](https://github.com/offense360/eo-re-mcp/issues/21) | Ghidra | Stale install-dir WARNING repeated on every `locate_ghidra()` call (residual from #17); now once per process per (source, path), DEBUG afterwards. `describe()` unchanged. | Fixed (b133ab1) |
+| [#22](https://github.com/offense360/eo-re-mcp/issues/22) | Ghidra | Headless analysis logged a `GhidraScriptUtil.bundleHost` NPE and silently skipped script-based analyzers (pre-existing since upstream). The worker now acquires the script bundle host once before its first analysis pass and keeps it. | Fixed (67eb7df) |
 
 ### Continuous integration on the fork
 
