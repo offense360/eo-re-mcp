@@ -39,3 +39,6 @@ Thumbs.db
 *.nam
 *.til
 *.idb
+
+# Local operations notes (internal infrastructure, never publish)
+AGENTS.md
