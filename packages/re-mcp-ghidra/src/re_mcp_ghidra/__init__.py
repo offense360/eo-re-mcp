@@ -67,7 +67,7 @@ def _read_ghidra_config() -> str | None:
     if not os.path.isfile(config_path):
         return None
     try:
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
         return config.get("ghidra-install-dir") or None
     except (json.JSONDecodeError, OSError):
