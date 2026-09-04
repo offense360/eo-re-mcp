@@ -80,26 +80,30 @@ call_ghidra = dispatch_to_main
 def transaction(program, label: str):
     """Run a mutation inside a Ghidra transaction.
 
-    Always ends the transaction with ``commit=True``, even on error. Under
-    GhidraProject's long-lived batch transaction an aborted nested entry
-    marks the whole batch ABORTED and Ghidra rolls back every change since
-    the last save when it ends (#11). Callers must validate before mutating.
+    Ends the transaction with ``commit=False`` on error, so a failed tool
+    leaves nothing behind.  This is only safe because the session no longer
+    keeps a standing "Batch Processing" transaction open (#18): a tool
+    transaction is now the outermost one, and aborting it rolls back that
+    tool's own changes and nothing else.  Under ``GhidraProject`` an aborted
+    nested entry marked the whole batch ABORTED and Ghidra rolled back every
+    change since the last save, which is why this used to always commit (#11).
     """
     tx_id = program.startTransaction(label)
+    success = True
     try:
         yield
     except Exception as exc:
+        success = False
         log.warning(
-            "Transaction %r raised %s: %s; the transaction was committed (nested abort "
-            "would roll back the whole batch, #11). Any mutation made before the error "
-            "is kept.",
+            "Transaction %r raised %s: %s; the transaction was rolled back; nothing "
+            "from this call was kept (#18).",
             label,
             type(exc).__name__,
             exc,
         )
         raise
     finally:
-        program.endTransaction(tx_id, True)
+        program.endTransaction(tx_id, success)
 
 
 # ---------------------------------------------------------------------------

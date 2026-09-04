@@ -44,27 +44,29 @@ class TestTransaction:
             ("end", 42, True),
         ]
 
-    def test_ghidra_error_propagates_and_still_commits(self):
+    def test_ghidra_error_propagates_and_aborts(self):
         program = FakeProgram()
         with pytest.raises(GhidraError, match="nope"), transaction(program, "Set color"):
             raise GhidraError("nope", error_type="NotFound")
-        assert program.calls == [("start", "Set color", 42), ("end", 42, True)]
+        assert program.calls == [("start", "Set color", 42), ("end", 42, False)]
 
-    def test_generic_exception_propagates_and_still_commits(self):
+    def test_generic_exception_propagates_and_aborts(self):
         program = FakeProgram()
         with pytest.raises(RuntimeError, match="java says no"), transaction(program, "Write bytes"):
             raise RuntimeError("java says no")
-        assert program.calls == [("start", "Write bytes", 42), ("end", 42, True)]
+        assert program.calls == [("start", "Write bytes", 42), ("end", 42, False)]
 
-    def test_never_aborts(self):
+    def test_always_aborts_on_error(self):
+        """#18: a tool transaction is now the outermost one, so aborting rolls
+        back only that tool's own changes."""
         program = FakeProgram()
         for exc in (GhidraError("a", error_type="X"), ValueError("b"), KeyError("c")):
             with pytest.raises(type(exc)), transaction(program, "Anything"):
                 raise exc
         ends = [c for c in program.calls if c[0] == "end"]
         assert len(ends) == 3
-        assert all(commit is True for _, _, commit in ends)
-        assert not any(commit is False for _, _, commit in ends)
+        assert all(commit is False for _, _, commit in ends)
+        assert not any(commit is True for _, _, commit in ends)
 
     def test_failure_logs_warning_mentioning_issue(self, caplog):
         program = FakeProgram()
@@ -77,12 +79,13 @@ class TestTransaction:
         messages = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert len(messages) == 1
         assert "Patch bytes" in messages[0]
-        assert "#11" in messages[0]
+        assert "#18" in messages[0]
 
     def test_failure_warning_names_exception_and_states_what_was_kept(self, caplog):
-        """#14: the WARNING must say which exception fired and that prior
-        mutations were kept, so an operator can tell a partial change from
-        a clean failure without reading the tool source."""
+        """#14: the WARNING must say which exception fired and what happened to
+        the mutations, so an operator can tell a partial change from a clean
+        failure without reading the tool source.  Under #18 the answer is that
+        nothing was kept."""
         program = FakeProgram()
         with (
             caplog.at_level("WARNING", logger="re_mcp_ghidra.helpers"),
@@ -94,7 +97,8 @@ class TestTransaction:
         assert len(messages) == 1
         assert "ValueError" in messages[0]
         assert "boom" in messages[0]
-        assert "kept" in messages[0]
+        assert "rolled back" in messages[0]
+        assert "nothing from this call was kept" in messages[0]
 
     def test_success_logs_nothing(self, caplog):
         program = FakeProgram()
