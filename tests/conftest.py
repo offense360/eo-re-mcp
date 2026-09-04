@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-"""Shared test fixtures — IDA module stubs for tests that run without idalib."""
+"""Shared test fixtures — IDA module stubs for tests that run without idalib,
+plus the ``posix_only`` platform marker (issue #16)."""
 
 from __future__ import annotations
 
@@ -10,6 +11,36 @@ import importlib.util
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
+
+import pytest
+
+# ---------------------------------------------------------------------------
+# Platform marker
+# ---------------------------------------------------------------------------
+
+#: The only platform condition tests may key on (issue #16, rule 4.2).
+IS_WINDOWS = sys.platform == "win32"
+
+#: ``@pytest.mark.posix_only(reason="...")`` — the reason must name the POSIX
+#: feature the test depends on (SIGKILL, fchmod mode bits, PosixPath, ...).
+posix_only = pytest.mark.posix_only
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """On Windows, turn ``posix_only`` marks into skips carrying their specific reason.
+
+    Done at collection time (rather than in ``pytest_runtest_setup``) so the
+    ``-rs`` summary points at the marked test, not at this hook.
+    """
+    if not IS_WINDOWS:
+        return
+    for item in items:
+        for mark in item.iter_markers(name="posix_only"):
+            reason = mark.kwargs.get("reason") or (mark.args[0] if mark.args else None)
+            item.add_marker(
+                pytest.mark.skip(reason=f"{reason or 'POSIX-only behavior'} (issue #16)")
+            )
+
 
 # All IDA modules that may be transitively imported by the code under test.
 # Stubbed once here so individual test files don't need to duplicate the list.

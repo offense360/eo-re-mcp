@@ -1397,6 +1397,10 @@ class TestDeathWatcher:
 class TestSignalHandlers:
     """Tests for _install_signal_handlers."""
 
+    @pytest.mark.posix_only(
+        reason="loop.add_signal_handler/remove_signal_handler raise NotImplementedError "
+        "on the Windows ProactorEventLoop"
+    )
     @pytest.mark.asyncio
     async def test_installs_on_running_loop(self):
         """Signal handlers are installed on the given loop."""

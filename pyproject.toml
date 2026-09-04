@@ -50,6 +50,11 @@ dev = [
 ]
 
 
+[tool.pytest.ini_options]
+markers = [
+    "posix_only(reason): requires POSIX semantics (signals, file modes, path flavour); skipped on win32 with the given reason (issue #16)",
+]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
