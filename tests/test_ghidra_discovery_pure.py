@@ -80,6 +80,7 @@ def isolated(monkeypatch, tmp_path) -> _Isolated:
         "_platform_default_patterns",
         lambda: [str(iso.defaults / "ghidra_*")],
     )
+    monkeypatch.setattr(re_mcp_ghidra, "_warned_sources", set(), raising=False)
     return iso
 
 
@@ -162,6 +163,76 @@ def test_unreadable_config_warns_and_continues(isolated, caplog):
     assert search.path == default
     assert any("ghidra-config.json" in w for w in _warnings(caplog))
     assert "unreadable" in search.describe()
+
+
+# ---------------------------------------------------------------------------
+# warn once per process (#21)
+# ---------------------------------------------------------------------------
+
+
+def _debug_messages(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+
+
+def test_stale_env_warns_once_per_process(isolated, monkeypatch, caplog):
+    """#21: the supervisor calls ``locate_ghidra()`` at startup, before every
+    ``open_database`` and in ``list_targets``; a stale source must be reported
+    once per process and demoted to DEBUG afterwards."""
+    monkeypatch.setenv("GHIDRA_INSTALL_DIR", isolated.missing)
+    good = isolated.make_dir("ghidra_cfg")
+    isolated.write_config(good)
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        first = locate_ghidra()
+        second = locate_ghidra()
+    assert first.path == good
+    assert second.path == good
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1
+    assert isolated.missing in warnings[0]
+    repeated = [m for m in _debug_messages(caplog) if "already reported" in m]
+    assert len(repeated) == 1
+    assert isolated.missing in repeated[0]
+
+
+def test_different_stale_path_warns_again(isolated, monkeypatch, caplog):
+    good = isolated.make_dir("ghidra_cfg")
+    isolated.write_config(good)
+    other_missing = str(isolated.tmp_path / "gone" / "ghidra_9.9.9_PUBLIC")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        monkeypatch.setenv("GHIDRA_INSTALL_DIR", isolated.missing)
+        locate_ghidra()
+        monkeypatch.setenv("GHIDRA_INSTALL_DIR", other_missing)
+        locate_ghidra()
+    warnings = _warnings(caplog)
+    assert len(warnings) == 2
+    assert isolated.missing in warnings[0]
+    assert other_missing in warnings[1]
+
+
+def test_unreadable_config_warns_once(isolated, caplog):
+    isolated.write_raw_config("{not json")
+    isolated.defaults.mkdir()
+    default = isolated.make_dir("defaults/ghidra_1")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        first = locate_ghidra()
+        second = locate_ghidra()
+    assert first.path == default
+    assert second.path == default
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1
+    assert "ghidra-config.json" in warnings[0]
+
+
+def test_describe_unchanged_when_warning_suppressed(isolated, monkeypatch, caplog):
+    monkeypatch.setenv("GHIDRA_INSTALL_DIR", isolated.missing)
+    good = isolated.make_dir("ghidra_cfg")
+    isolated.write_config(good)
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        first = locate_ghidra()
+        second = locate_ghidra()
+    assert len(_warnings(caplog)) == 1
+    assert second.describe() == first.describe()
+    assert second == first
 
 
 # ---------------------------------------------------------------------------

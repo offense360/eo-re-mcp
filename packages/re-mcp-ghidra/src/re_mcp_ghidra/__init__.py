@@ -131,6 +131,23 @@ def _lastrun_path() -> str:
     return os.path.join(base, "ghidra", "lastrun")
 
 
+# Stale-source warnings already emitted by this process, keyed by
+# (source label, path or error text).  The supervisor calls locate_ghidra()
+# at startup, before every open_database and in list_targets, and each worker
+# calls it again in bootstrap(); the same stale entry must only be reported
+# once per process (#21).
+_warned_sources: set[tuple[str, str]] = set()
+
+
+def _warn_once(key: tuple[str, str], msg: str, *args) -> None:
+    """Log *msg* as a WARNING the first time *key* is seen, DEBUG afterwards."""
+    if key in _warned_sources:
+        log.debug(msg + " (already reported)", *args)
+        return
+    _warned_sources.add(key)
+    log.warning(msg, *args)
+
+
 def locate_ghidra() -> GhidraSearch:
     """Find the Ghidra installation directory and report every source checked.
 
@@ -142,7 +159,9 @@ def locate_ghidra() -> GhidraSearch:
 
     A configured source (1, 2 or 4) whose directory is missing is logged as a
     WARNING and skipped.  This is the only place discovery warns, so callers
-    do not repeat the message.
+    do not repeat the message; the same stale entry is reported once per
+    process (#21) and at DEBUG after that.  The returned ``GhidraSearch`` is
+    unaffected by the suppression.
     """
     candidates: list[GhidraCandidate] = []
     unavailable: list[str] = []
@@ -155,7 +174,9 @@ def locate_ghidra() -> GhidraSearch:
         exists = os.path.isdir(path)
         candidates.append(GhidraCandidate(source=source, path=path, exists=exists))
         if not exists and source != SOURCE_PLATFORM:
-            log.warning("%s points at %s, which does not exist; ignoring it", source, path)
+            _warn_once(
+                (source, path), "%s points at %s, which does not exist; ignoring it", source, path
+            )
         return exists
 
     # 1. environment variable
@@ -172,7 +193,12 @@ def locate_ghidra() -> GhidraSearch:
     if os.path.isfile(config_file):
         value, error = _read_ghidra_config(config_file)
         if error is not None:
-            log.warning("%s could not be read (%s); ignoring it", config_source, error)
+            _warn_once(
+                (config_source, error),
+                "%s could not be read (%s); ignoring it",
+                config_source,
+                error,
+            )
             unavailable.append(f"{config_source}: unreadable")
         elif value:
             if check(config_source, value):
@@ -235,7 +261,12 @@ def _read_lastrun(lastrun_file: str) -> str | None:
         with open(lastrun_file, encoding="utf-8") as f:
             return f.readline().strip()
     except (OSError, UnicodeDecodeError) as exc:
-        log.warning("lastrun (%s) could not be read (%s); ignoring it", lastrun_file, exc)
+        _warn_once(
+            (f"lastrun ({lastrun_file})", str(exc)),
+            "lastrun (%s) could not be read (%s); ignoring it",
+            lastrun_file,
+            exc,
+        )
         return None
 
 
