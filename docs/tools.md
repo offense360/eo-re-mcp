@@ -498,12 +498,12 @@ Directory tree (folder organization).
 
 ## Undo
 
-Undo and redo operations.
+Undo and redo operations. Not available on Ghidra: pyghidra's `GhidraProject` keeps a transaction open for the life of the program, and Ghidra only allows undo when no transaction is active (#10). The Ghidra backend reports `capabilities.undo == false` and does not register these tools.
 
 | Tool | Description |
 |------|-------------|
-| `undo` | Undo the last modification. |
-| `redo` | Redo the last undone change. |
+| `undo` (IDA) | Undo the last modification. |
+| `redo` (IDA) | Redo the last undone change. |
 
 ## Snapshots
 

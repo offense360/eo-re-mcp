@@ -425,3 +425,20 @@ def test_mark_program_analyzed_calls_utility(ghidra_stubs, existing_project):
     session.mark_program_analyzed()
 
     assert ghidra_stubs["calls"][-1] == ("mark", program)
+
+
+def test_capabilities_report_no_undo(ghidra_stubs, existing_project):
+    """Ghidra sessions advertise ``undo: False`` (#10).
+
+    GhidraProject keeps a transaction open for the life of the program and
+    Ghidra only allows undo/redo when no transaction is active, so the
+    capability must be reported as unavailable.
+    """
+    program = FakeProgram()
+    project = FakeProject(program, None)
+    ghidra_stubs["project"] = project
+
+    session, _ = _open(existing_project)
+
+    assert "undo" in session.capabilities
+    assert session.capabilities["undo"] is False

@@ -245,7 +245,7 @@ Rules that follow from this:
 
 - **Mutating tools must use `helpers.transaction(program, label)`** and never call `startTransaction`/`endTransaction` directly. The context manager always ends its entry with `commit=True`, even when the body raises, and logs a warning so the partial state is visible in the worker log.
 - **Validate before mutating.** Because a failing tool can no longer roll back its own partial change, everything that can fail (address/range checks, name validation, type lookups) must happen before the first mutating call. `helpers.check_range_in_memory()` exists for the common "does this range exist in memory" case; `write_memory` and the `make_*` / `set_type` tools use it before clearing code units.
-- Undo/redo cannot be offered through this path either (see #10): `program.undo()` needs the batch transaction to be closed.
+- Undo/redo cannot be offered through this path either (see #10): `program.undo()` needs the batch transaction to be closed, so the Ghidra worker does not register `undo`/`redo` and reports `capabilities.undo == false`.
 
 ### Address resolution
 
@@ -418,7 +418,7 @@ The tool modules are organized by domain. Both backends share the same module na
 - `utility.py` — number conversion, expression evaluation, script execution
 - `bookmarks.py` — bookmark management
 - `colors.py` — address/function coloring
-- `undo.py` — undo/redo
+- `undo.py` — undo/redo (IDA only; not registered on Ghidra, see #10)
 - `snapshots.py` — database snapshot take/list/restore
 - `dirtree.py` — directory tree management
 - `signatures.py`, `sig_gen.py` — signature libraries and type libraries

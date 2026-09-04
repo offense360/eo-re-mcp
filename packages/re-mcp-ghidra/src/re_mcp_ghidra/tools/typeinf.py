@@ -141,8 +141,8 @@ def register(mcp: FastMCP) -> None:
     def delete_local_type(name: str) -> DeleteLocalTypeResult:
         """Remove a data type from the program's data type manager.
 
-        Irreversible -- the type declaration is removed. Use undo to
-        revert if needed.
+        Irreversible -- the type declaration is removed and undo is not
+        available on Ghidra (see save_database for the persistence boundary).
 
         Args:
             name: Name of the data type to delete.

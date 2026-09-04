@@ -217,6 +217,10 @@ class Session:
         """Detect which optional features are available."""
         return {
             "decompiler": True,
+            # GhidraProject keeps a transaction open for the life of the program
+            # and Ghidra only allows undo/redo when no transaction is active, so
+            # the undo/redo tools are not registered on this backend (#10).
+            "undo": False,
         }
 
     def _tx_state(self) -> str:
