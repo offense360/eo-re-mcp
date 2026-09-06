@@ -134,6 +134,23 @@ def count_functions(func_mgr: Any) -> tuple[int, int]:
     return (internal, external)
 
 
+def database_info_paths(session_path: str | None, importer_path: str | None) -> tuple[str, str]:
+    """Return ``(file_path, executable_path)`` for ``get_database_info``.
+
+    ``Program.getExecutablePath()`` gives the path as the Ghidra importer
+    recorded it, which on Windows is normalised to a leading-slash forward-slash
+    form (``/C:/Users/.../curl.exe``).  ``open_database`` and ``list_databases``
+    report the OS path the caller passed in, so the three tools disagreed on the
+    same database (#31).  The session path therefore wins, with the importer
+    path kept as a fallback and surfaced separately.
+
+    Both arguments accept ``None`` because ``getExecutablePath()`` may return a
+    Java null and the session may not have a path yet.
+    """
+    file_path = session_path or importer_path or ""
+    return (file_path, importer_path or "")
+
+
 class OpenDatabaseResult(BaseModel):
     status: str = Field(description="Operation status.")
     path: str = Field(description="Path to the opened file.")
@@ -162,7 +179,13 @@ class OpenDatabaseResult(BaseModel):
 
 
 class DatabaseInfoResult(BaseModel):
-    file_path: str = Field(description="Path to the binary.")
+    file_path: str = Field(
+        description="Path to the binary, as the OS spells it (same value as open_database.path)."
+    )
+    executable_path: str = Field(
+        default="",
+        description="Path as recorded by the Ghidra importer (normalised, may start with '/').",
+    )
     file_type: str = Field(description="File format.")
     processor: str = Field(description="Processor/language.")
     compiler_spec: str = Field(description="Compiler specification.")
@@ -284,8 +307,15 @@ def register(mcp: FastMCP) -> None:
 
         entry_count = sum(1 for s in sym_table.getAllSymbols(True) if s.isExternalEntryPoint())
 
+        # The session path is the OS path the caller opened; the importer's is
+        # normalised ("/C:/..." on Windows) and is reported separately (#31).
+        file_path, executable_path = database_info_paths(
+            session.current_path, program.getExecutablePath()
+        )
+
         return DatabaseInfoResult(
-            file_path=program.getExecutablePath() or session.current_path or "",
+            file_path=file_path,
+            executable_path=executable_path,
             file_type=program.getExecutableFormat() or "unknown",
             processor=str(lang.getLanguageID()),
             compiler_spec=str(program.getCompilerSpec().getCompilerSpecID()),

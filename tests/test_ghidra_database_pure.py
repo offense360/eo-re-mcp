@@ -20,6 +20,7 @@ from re_mcp_ghidra.tools.database import (
     DatabaseInfoResult,
     OpenDatabaseResult,
     count_functions,
+    database_info_paths,
     loaded_memory_bounds,
 )
 
@@ -430,3 +431,47 @@ class TestExternalFunctionCountIsReported:
             "External functions are not listed; see get_database_info.external_function_count."
             in source
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #31 — file_path must be the OS path
+# ---------------------------------------------------------------------------
+
+
+class TestDatabaseInfoPaths:
+    def test_session_path_wins_over_the_importer_path(self):
+        """open_database / list_databases return the OS path; get_database_info
+        returned Ghidra's normalised '/C:/...' form instead (#31)."""
+        assert database_info_paths(r"C:\x\curl.exe", "/C:/x/curl.exe") == (
+            r"C:\x\curl.exe",
+            "/C:/x/curl.exe",
+        )
+
+    def test_importer_path_is_the_fallback_when_the_session_has_none(self):
+        assert database_info_paths("", "/C:/x/curl.exe") == ("/C:/x/curl.exe", "/C:/x/curl.exe")
+
+    def test_none_inputs_become_empty_strings(self):
+        assert database_info_paths(None, None) == ("", "")
+        assert database_info_paths("", "") == ("", "")
+        assert database_info_paths(None, "/opt/bin/ls") == ("/opt/bin/ls", "/opt/bin/ls")
+        assert database_info_paths("/opt/bin/ls", None) == ("/opt/bin/ls", "")
+
+    def test_posix_paths_are_returned_verbatim(self):
+        """On POSIX the two agree; nothing must be rewritten either way."""
+        assert database_info_paths("/opt/bin/ls", "/opt/bin/ls") == ("/opt/bin/ls", "/opt/bin/ls")
+
+
+class TestExecutablePathIsExposed:
+    def test_field_documents_the_importer_normalisation(self):
+        field = DatabaseInfoResult.model_fields["executable_path"]
+        assert field.default == ""
+        desc = (field.description or "").lower()
+        assert "importer" in desc
+        assert "normalised" in desc
+
+    def test_get_database_info_uses_the_helper(self):
+        source = DATABASE_PY.read_text(encoding="utf-8")
+        _, marker, tool_bodies = source.partition("def register(")
+        assert marker, "register() not found - parser regression?"
+        assert "database_info_paths(" in tool_bodies
+        assert "program.getExecutablePath() or session.current_path" not in tool_bodies
