@@ -196,6 +196,17 @@ def _lvar_flags(lvar) -> list[str]:
     return flags
 
 
+def drop_cached_decompilation(func_start: int) -> bool:
+    """Flush the cached cfunc of the function at *func_start*; True if one was cached.
+
+    ``mark_cfunc_dirty`` returns True on IDA 9.4 whether or not an entry existed
+    (issue #6), so the cache state is read with ``has_cached_cfunc`` first.
+    """
+    was_cached = ida_hexrays.has_cached_cfunc(func_start)
+    ida_hexrays.mark_cfunc_dirty(func_start, False)
+    return was_cached
+
+
 def _find_lvar(cfunc, name: str):
     """Look up an lvar by name, raising the usual NotFound with the valid choices."""
     for lvar in cfunc.lvars:
@@ -573,7 +584,7 @@ def register(mcp: FastMCP):
             function_address: Address or name of the function.
         """
         func = resolve_function(function_address)
-        was_cached = ida_hexrays.mark_cfunc_dirty(func.start_ea, False)
+        was_cached = drop_cached_decompilation(func.start_ea)
         return RefreshDecompilationResult(
             function=format_address(func.start_ea),
             name=get_func_name(func.start_ea),

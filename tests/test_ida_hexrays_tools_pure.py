@@ -201,3 +201,29 @@ def test_obj_string_returns_none_for_empty_strlit(ctree_mod, strlit_stubs):
 
     assert ctree_mod._obj_string(0x14000A690) is None
     ida_bytes.get_strlit_contents.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# refresh_decompilation (tools/decompiler.py)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def decompiler_mod():
+    ida_hexrays.has_cached_cfunc.reset_mock()
+    ida_hexrays.mark_cfunc_dirty.reset_mock()
+    # IDA 9.4 returns True from mark_cfunc_dirty whether or not an entry existed
+    ida_hexrays.mark_cfunc_dirty.return_value = True
+    return importlib.import_module("re_mcp_ida.tools.decompiler")
+
+
+@pytest.mark.parametrize("cached", [True, False])
+def test_drop_cached_decompilation_reports_cache_state_from_has_cached_cfunc(
+    decompiler_mod, cached
+):
+    ida_hexrays.has_cached_cfunc.return_value = cached
+
+    assert decompiler_mod.drop_cached_decompilation(FUNC_START) is cached
+
+    ida_hexrays.has_cached_cfunc.assert_called_once_with(FUNC_START)
+    ida_hexrays.mark_cfunc_dirty.assert_called_once_with(FUNC_START, False)
