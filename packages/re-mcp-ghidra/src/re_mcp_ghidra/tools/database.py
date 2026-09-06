@@ -134,6 +134,24 @@ def count_functions(func_mgr: Any) -> tuple[int, int]:
     return (internal, external)
 
 
+def entry_points(sym_table: Any) -> list[tuple[Any, str]]:
+    """``(address, name)`` for every external entry point *address*, one per address.
+
+    ``SymbolTable.getExternalEntryPointIterator()`` is Ghidra's own definition of
+    the entry point set.  Counting symbols with ``isExternalEntryPoint()`` instead
+    double-counts an address that carries both a label and a function symbol
+    (ELF ``_DT_INIT``/``__DT_INIT``: 7 symbols for 5 addresses), and counting
+    only FUNCTION symbols happens to match today but for the wrong reason (#45).
+    Name is the primary symbol's, ``""`` when there is none.  Iterator order is
+    kept.
+    """
+    out: list[tuple[Any, str]] = []
+    for addr in sym_table.getExternalEntryPointIterator():
+        sym = sym_table.getPrimarySymbol(addr)
+        out.append((addr, sym.getName() if sym else ""))
+    return out
+
+
 def database_info_paths(session_path: str | None, importer_path: str | None) -> tuple[str, str]:
     """Return ``(file_path, executable_path)`` for ``get_database_info``.
 
@@ -231,7 +249,9 @@ class DatabaseInfoResult(BaseModel):
         ),
     )
     segment_count: int = Field(description="Number of memory blocks.")
-    entry_point_count: int = Field(description="Number of entry points.")
+    entry_point_count: int = Field(
+        description="Number of entry point addresses (same set as get_entry_points)."
+    )
     capabilities: dict[str, bool] = Field(description="Available capabilities.")
 
 
@@ -305,7 +325,7 @@ def register(mcp: FastMCP) -> None:
         min_addr, max_addr = loaded_memory_bounds(mem, default_space)
         internal_funcs, external_funcs = count_functions(func_mgr)
 
-        entry_count = sum(1 for s in sym_table.getAllSymbols(True) if s.isExternalEntryPoint())
+        entry_count = len(entry_points(sym_table))
 
         # The session path is the OS path the caller opened; the importer's is
         # normalised ("/C:/..." on Windows) and is reported separately (#31).

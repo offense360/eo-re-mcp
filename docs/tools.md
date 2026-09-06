@@ -174,7 +174,7 @@ Imported functions, exported symbols, and entry points.
 |------|-------------|
 | `get_imports` | List imported functions, optionally filtered by module name. Paginated. |
 | `get_exports` | List exported symbols. Paginated. |
-| `get_entry_points` | List entry points. Paginated. |
+| `get_entry_points` | List entry points. Paginated. One item per entry point address; name is the primary symbol at that address (Ghidra: the same set `get_database_info.entry_point_count` counts). |
 | `set_import_name` | Set the name of an import entry (IDA). |
 | `set_import_ordinal` | Set the ordinal of an import entry (IDA). |
 

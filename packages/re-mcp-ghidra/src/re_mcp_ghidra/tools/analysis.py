@@ -24,7 +24,7 @@ from re_mcp_ghidra.helpers import (
     transaction,
 )
 from re_mcp_ghidra.session import session
-from re_mcp_ghidra.tools.database import count_functions, loaded_memory_bounds
+from re_mcp_ghidra.tools.database import count_functions, entry_points, loaded_memory_bounds
 
 
 class ReanalyzeRangeResult(BaseModel):
@@ -46,7 +46,9 @@ class AnalysisCompleteResult(BaseModel):
         )
     )
     segment_count: int = Field(description="Number of memory blocks.")
-    entry_point_count: int = Field(description="Number of entry points.")
+    entry_point_count: int = Field(
+        description="Number of entry point addresses (same set as get_entry_points)."
+    )
     min_address: str = Field(
         description=(
             "Lowest address of loaded, non-artificial memory in one address space "
@@ -158,14 +160,7 @@ def register(mcp: FastMCP) -> None:
         func_count, _external_count = count_functions(func_mgr)
         block_count = memory.getBlocks().__len__()
 
-        # Count entry points via the symbol table
-        from ghidra.program.model.symbol import SymbolType  # noqa: PLC0415
-
-        entry_count = 0
-        sym_iter = sym_table.getAllSymbols(True)
-        for sym in sym_iter:
-            if sym.getSymbolType() == SymbolType.FUNCTION and sym.isExternalEntryPoint():
-                entry_count += 1
+        entry_count = len(entry_points(sym_table))
 
         min_address, max_address = analysis_bounds(program)
 

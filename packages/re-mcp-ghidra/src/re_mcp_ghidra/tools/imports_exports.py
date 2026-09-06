@@ -17,6 +17,7 @@ from re_mcp_ghidra.helpers import (
     paginate_iter,
 )
 from re_mcp_ghidra.session import session
+from re_mcp_ghidra.tools.database import entry_points
 
 
 class ImportItem(BaseModel):
@@ -38,7 +39,7 @@ class EntryPointItem(BaseModel):
     """An entry point."""
 
     address: str = Field(description="Entry point address (hex).")
-    name: str = Field(description="Entry point name.")
+    name: str = Field(description="Primary symbol at the address; empty when there is none.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -122,8 +123,10 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """List binary entry points (main/start/exports).
 
-        Entry points are addresses where execution may begin. For shared
-        libraries, get_exports is more complete (includes all exported symbols).
+        Entry points are addresses where execution may begin; one item per
+        entry point address, named after its primary symbol (the same set
+        get_database_info.entry_point_count counts).  For shared libraries,
+        get_exports is more complete (includes all exported symbols).
 
         Args:
             offset: Pagination offset.
@@ -133,15 +136,10 @@ def register(mcp: FastMCP) -> None:
         sym_table = program.getSymbolTable()
 
         def _gen():
-            sym_iter = sym_table.getAllSymbols(True)
-            for sym in sym_iter:
-                if sym.isExternalEntryPoint():
-                    addr = sym.getAddress()
-                    if addr.isExternalAddress():
-                        continue
-                    yield EntryPointItem(
-                        address=format_address(addr.getOffset()),
-                        name=sym.getName(),
-                    ).model_dump()
+            for addr, name in entry_points(sym_table):
+                yield EntryPointItem(
+                    address=format_address(addr.getOffset()),
+                    name=name,
+                ).model_dump()
 
         return paginate_iter(_gen(), offset, limit)

@@ -22,6 +22,7 @@ from re_mcp_ghidra.tools.database import (
     OpenDatabaseResult,
     count_functions,
     database_info_paths,
+    entry_points,
     loaded_memory_bounds,
 )
 
@@ -36,6 +37,9 @@ GHIDRA_TOOLS_DIR = (
 DATABASE_PY = GHIDRA_TOOLS_DIR / "database.py"
 ANALYSIS_PY = GHIDRA_TOOLS_DIR / "analysis.py"
 FUNCTIONS_PY = GHIDRA_TOOLS_DIR / "functions.py"
+IMPORTS_EXPORTS_PY = GHIDRA_TOOLS_DIR / "imports_exports.py"
+RESOURCES_PY = GHIDRA_TOOLS_DIR.parent / "resources.py"
+DOCS_TOOLS_MD = pathlib.Path(__file__).resolve().parent.parent / "docs" / "tools.md"
 
 
 # ---------------------------------------------------------------------------
@@ -562,3 +566,169 @@ class TestAnalyzeDatabaseUsesLoadedBounds:
             desc = (fields[name].description or "").lower()
             assert "get_database_info" in desc
             assert "one address space" in desc
+
+
+# ---------------------------------------------------------------------------
+# Issue #45 — one definition of "entry point" (an address, per Ghidra's own
+# SymbolTable.getExternalEntryPointIterator()) for every tool that counts or
+# lists them
+# ---------------------------------------------------------------------------
+
+
+class FakeSymbol:
+    def __init__(self, name: str, addr: FakeAddr, sym_type: str) -> None:
+        self._name, self._addr, self._type = name, addr, sym_type
+
+    def getName(self) -> str:
+        return self._name
+
+    def getAddress(self) -> FakeAddr:
+        return self._addr
+
+    def isExternalEntryPoint(self) -> bool:
+        return True
+
+    def getSymbolType(self) -> str:
+        return self._type
+
+
+class FakeSymbolTable:
+    """``SymbolTable`` narrowed to the entry point API.
+
+    *entries* is ``[(address, names)]``; ``names`` lists every symbol at the
+    address, primary first, and ``None`` means the address carries no symbol.
+    A second name models the ELF label/function overlap
+    (``_DT_INIT`` + ``__DT_INIT``) — a FUNCTION primary plus a LABEL —
+    which is what made the symbol-based count come out at 7 for 5 addresses.
+    """
+
+    def __init__(self, entries: list[tuple[FakeAddr, list[str] | None]]) -> None:
+        self._entries = entries
+
+    def getExternalEntryPointIterator(self):
+        return iter(addr for addr, _ in self._entries)
+
+    def getPrimarySymbol(self, addr: FakeAddr) -> FakeSymbol | None:
+        for a, names in self._entries:
+            if a is addr:
+                return FakeSymbol(names[0], addr, "Function") if names else None
+        return None
+
+    def getAllSymbols(self, include_dynamic: bool):
+        """Old-style enumeration: every symbol, each flagged as an entry point."""
+        for addr, names in self._entries:
+            for i, name in enumerate(names or []):
+                yield FakeSymbol(name, addr, "Function" if i == 0 else "Label")
+
+
+ELF_ENTRIES: list[tuple[FakeAddr, list[str] | None]] = [
+    (FakeAddr(0x10E3A0), ["entry"]),
+    (FakeAddr(0x10B000), ["_DT_INIT", "__DT_INIT"]),
+    (FakeAddr(0x126E80), ["_DT_FINI", "__DT_FINI"]),
+    (FakeAddr(0x10E480), ["_INIT_0"]),
+    (FakeAddr(0x10E440), ["_FINI_0"]),
+]
+
+
+class TestEntryPoints:
+    def test_elf_counts_addresses_not_symbols(self):
+        """5 entry point addresses, 7 entry point symbols: the count is 5 (#45)."""
+        st = FakeSymbolTable(ELF_ENTRIES)
+        assert sum(1 for s in st.getAllSymbols(True) if s.isExternalEntryPoint()) == 7
+        assert len(entry_points(st)) == 5
+
+    def test_elf_names_are_the_primary_symbols_in_iterator_order(self):
+        st = FakeSymbolTable(ELF_ENTRIES)
+        assert [name for _, name in entry_points(st)] == [
+            "entry",
+            "_DT_INIT",
+            "_DT_FINI",
+            "_INIT_0",
+            "_FINI_0",
+        ]
+
+    def test_returns_the_iterator_address_objects(self):
+        st = FakeSymbolTable(ELF_ENTRIES)
+        assert [addr for addr, _ in entry_points(st)] == [a for a, _ in ELF_ENTRIES]
+
+    def test_pe_has_one_entry(self):
+        st = FakeSymbolTable([(FakeAddr(0x1400049F0), ["entry"])])
+        assert [(a.getOffset(), n) for a, n in entry_points(st)] == [(0x1400049F0, "entry")]
+
+    def test_address_without_a_symbol_has_an_empty_name(self):
+        st = FakeSymbolTable([(FakeAddr(0x401000), None)])
+        assert [(a.getOffset(), n) for a, n in entry_points(st)] == [(0x401000, "")]
+
+    def test_empty_iterator_gives_empty_list(self):
+        assert entry_points(FakeSymbolTable([])) == []
+
+
+def _between(source: str, start: str, end: str | None) -> str:
+    _, marker, rest = source.partition(start)
+    assert marker, f"{start!r} not found - parser regression?"
+    if end is None:
+        return rest
+    body, _, _ = rest.partition(end)
+    return body
+
+
+class TestEveryEntryPointConsumerUsesTheHelper:
+    """The four places that counted or listed entry points each had their own
+    predicate (#45).  All of them must now go through ``entry_points()``; the
+    symbol-level ``isExternalEntryPoint()`` test survives only where exports
+    are enumerated, which is a different concept."""
+
+    def test_get_database_info(self):
+        source = DATABASE_PY.read_text(encoding="utf-8")
+        tool_bodies = _between(source, "def register(", None)
+        assert "isExternalEntryPoint()" not in tool_bodies
+        assert tool_bodies.count("entry_points(") == 1
+
+    def test_analyze_database(self):
+        source = ANALYSIS_PY.read_text(encoding="utf-8")
+        assert "isExternalEntryPoint()" not in source
+        assert "SymbolType" not in source
+        assert source.count("entry_points(") == 1
+
+    def test_get_entry_points(self):
+        source = IMPORTS_EXPORTS_PY.read_text(encoding="utf-8")
+        body = _between(source, "def get_entry_points(", None)
+        assert "isExternalEntryPoint()" not in body
+        assert "isExternalAddress()" not in body
+        assert body.count("entry_points(") == 1
+        # get_exports keeps its own (symbol-level) definition.
+        exports = _between(source, "def get_exports(", "def get_entry_points(")
+        assert "isExternalEntryPoint()" in exports
+
+    def test_entrypoints_resource(self):
+        source = RESOURCES_PY.read_text(encoding="utf-8")
+        body = _between(source, "def _iter_entrypoints(", "def _iter_imports(")
+        assert "isExternalEntryPoint()" not in body
+        assert body.count("entry_points(") == 1
+
+    def test_statistics_resource(self):
+        source = RESOURCES_PY.read_text(encoding="utf-8")
+        body = _between(source, "def db_statistics(", None)
+        assert "isExternalEntryPoint()" not in body
+        assert body.count("entry_points(") == 1
+
+    def test_exports_resource_keeps_its_own_definition(self):
+        source = RESOURCES_PY.read_text(encoding="utf-8")
+        body = _between(source, "def _iter_exports(", "def register(")
+        assert "isExternalEntryPoint()" in body
+
+    def test_result_fields_point_at_get_entry_points(self):
+        for model in (DatabaseInfoResult, AnalysisCompleteResult):
+            desc = (model.model_fields["entry_point_count"].description or "").lower()
+            assert "entry point addresses" in desc
+            assert "get_entry_points" in desc
+
+    def test_docs_say_one_item_per_address(self):
+        rows = [
+            line
+            for line in DOCS_TOOLS_MD.read_text(encoding="utf-8").splitlines()
+            if line.startswith("| `get_entry_points`")
+        ]
+        assert len(rows) == 1
+        assert "one item per entry point address" in rows[0].lower()
+        assert "primary symbol" in rows[0]
