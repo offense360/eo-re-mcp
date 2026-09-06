@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import ida_frame
+import ida_funcs
+import ida_nalt
 import ida_typeinf
 import idc
 from fastmcp import FastMCP
@@ -19,6 +21,7 @@ from re_mcp_ida.helpers import (
     META_DECOMPILER,
     Address,
     IDAError,
+    decode_insn_at,
     decompile_at,
     format_address,
     get_func_name,
@@ -82,10 +85,45 @@ class StackDeltaResult(BaseModel):
     """Result of a stack delta override."""
 
     function: str = Field(description="Function address (hex).")
-    address: str = Field(description="Address the override applies to (hex).")
-    old_delta: int = Field(description="Previous SP delta at this address.")
+    address: str = Field(description="Address of the instruction (hex).")
+    applies_at: str = Field(
+        description="Address of the stack point: the end of the instruction (hex)."
+    )
+    old_delta: int = Field(description="Previous SP delta at the stack point.")
     delta: int | None = Field(default=None, description="New SP delta (null when deleted).")
-    sp_value: int = Field(description="SP value at this address after the change.")
+    sp_value: int = Field(description="SP value at the stack point after the change.")
+
+
+def stack_point_ea(ea: int) -> int:
+    """Address of the stack point for the instruction at *ea*.
+
+    IDA records SP changes at the *end* of the instruction that causes them
+    (``insn.ea + insn.size``); a point added at the instruction start would land
+    on the previous instruction's point instead (issue #6).
+    """
+    insn = decode_insn_at(ea)
+    return insn.ea + insn.size
+
+
+def delete_user_stack_point(func: ida_funcs.func_t, ea: int) -> int:
+    """Delete the user stack point of the instruction at *ea*, returning its address.
+
+    Refuses (``NotFound``) unless the point was added by the user: ``del_stkpnt``
+    would just as happily delete IDA's own point, and nothing short of
+    re-creating the instruction brings that back.
+    """
+    sp_ea = stack_point_ea(ea)
+    if not ida_nalt.is_usersp(sp_ea):
+        raise IDAError(
+            f"No user stack delta at {format_address(sp_ea)} "
+            "(IDA's own stack points are not deleted)",
+            error_type="NotFound",
+        )
+    if not ida_frame.del_stkpnt(func, sp_ea):
+        raise IDAError(
+            f"del_stkpnt failed at {format_address(sp_ea)}", error_type="OperationFailed"
+        )
+    return sp_ea
 
 
 def register(mcp: FastMCP):
@@ -190,27 +228,33 @@ def register(mcp: FastMCP):
 
         IDA tracks how each instruction moves SP; when it gets that wrong the function
         gets a broken frame and Hex-Rays refuses or produces nonsense. Pin the correct
-        delta here, then call refresh_decompilation on the function.
+        delta here, then call refresh_decompilation on the function. The point replaces
+        IDA's own point for that instruction; undo with delete_stack_delta.
 
         Args:
-            address: Address whose SP delta is wrong.
-            delta: Correct SP delta at that address (bytes, usually negative for a push).
+            address: Address of the instruction whose SP effect is wrong; the delta is
+                recorded at the end of that instruction (`ea + size`), where IDA keeps
+                stack points.
+            delta: Correct SP delta for that instruction (bytes, negative for a push).
         """
         func = resolve_function(address)
         ea = resolve_address(address)
 
-        old_delta = ida_frame.get_sp_delta(func, ea)
-        if not ida_frame.add_user_stkpnt(ea, delta):
+        sp_ea = stack_point_ea(ea)
+        old_delta = ida_frame.get_sp_delta(func, sp_ea)
+        if not ida_frame.add_user_stkpnt(sp_ea, delta):
             raise IDAError(
-                f"add_user_stkpnt failed at {format_address(ea)}", error_type="OperationFailed"
+                f"add_user_stkpnt failed at {format_address(sp_ea)}",
+                error_type="OperationFailed",
             )
 
         return StackDeltaResult(
             function=format_address(func.start_ea),
             address=format_address(ea),
+            applies_at=format_address(sp_ea),
             old_delta=old_delta,
             delta=delta,
-            sp_value=ida_frame.get_spd(func, ea),
+            sp_value=ida_frame.get_spd(func, sp_ea),
         )
 
     @mcp.tool(
@@ -221,23 +265,26 @@ def register(mcp: FastMCP):
     def delete_stack_delta(
         address: Address,
     ) -> StackDeltaResult:
-        """Remove a stack delta override, letting IDA's own SP tracking take over again.
+        """Remove a set_stack_delta override; IDA's own stack points are never deleted.
+
+        Only user stack points are removed (NotFound otherwise). IDA does not recreate
+        the automatic point the override replaced; if the instruction's own SP effect
+        is needed again, re-create the instruction so IDA re-emulates it.
 
         Args:
-            address: Address whose override should be dropped.
+            address: Address of the instruction whose override should be dropped.
         """
         func = resolve_function(address)
         ea = resolve_address(address)
 
-        old_delta = ida_frame.get_sp_delta(func, ea)
-        if not ida_frame.del_stkpnt(func, ea):
-            raise IDAError(
-                f"No stack delta override at {format_address(ea)}", error_type="NotFound"
-            )
+        sp_ea = stack_point_ea(ea)
+        old_delta = ida_frame.get_sp_delta(func, sp_ea)
+        delete_user_stack_point(func, ea)
 
         return StackDeltaResult(
             function=format_address(func.start_ea),
             address=format_address(ea),
+            applies_at=format_address(sp_ea),
             old_delta=old_delta,
-            sp_value=ida_frame.get_spd(func, ea),
+            sp_value=ida_frame.get_spd(func, sp_ea),
         )

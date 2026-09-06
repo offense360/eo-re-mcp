@@ -12,8 +12,10 @@ idalib is required.
 from __future__ import annotations
 
 import importlib
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import ida_frame
 import ida_hexrays
 import ida_nalt
 import ida_typeinf
@@ -82,3 +84,44 @@ def test_clear_call_site_type_deletes_operand_type_then_marks_dirty(function_typ
 
     ida_nalt.del_op_tinfo.assert_called_once_with(CALL_EA, 0)
     ida_hexrays.mark_cfunc_dirty.assert_called_once_with(FUNC_START, False)
+
+
+# ---------------------------------------------------------------------------
+# set_stack_delta / delete_stack_delta (tools/frames.py)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def frames_mod(monkeypatch):
+    mod = importlib.import_module("re_mcp_ida.tools.frames")
+    # `sub rsp, 30h` at 0x1000 is 4 bytes; IDA keeps the stack point at its end.
+    monkeypatch.setattr(mod, "decode_insn_at", lambda ea: SimpleNamespace(ea=ea, size=4))
+    ida_nalt.is_usersp.reset_mock()
+    ida_frame.del_stkpnt.reset_mock()
+    return mod
+
+
+def test_stack_point_ea_is_instruction_end(frames_mod):
+    assert frames_mod.stack_point_ea(0x1000) == 0x1004
+
+
+def test_delete_stack_delta_refuses_auto_points(frames_mod):
+    func = object()
+    ida_nalt.is_usersp.return_value = False
+
+    with pytest.raises(IDAError) as excinfo:
+        frames_mod.delete_user_stack_point(func, 0x1000)
+
+    assert excinfo.value.error_type == "NotFound"
+    ida_nalt.is_usersp.assert_called_once_with(0x1004)
+    ida_frame.del_stkpnt.assert_not_called()
+
+
+def test_delete_stack_delta_removes_user_point_at_instruction_end(frames_mod):
+    func = object()
+    ida_nalt.is_usersp.return_value = True
+    ida_frame.del_stkpnt.return_value = True
+
+    assert frames_mod.delete_user_stack_point(func, 0x1000) == 0x1004
+
+    ida_frame.del_stkpnt.assert_called_once_with(func, 0x1004)
