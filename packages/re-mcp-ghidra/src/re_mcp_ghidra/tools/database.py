@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -17,6 +18,106 @@ from re_mcp_ghidra.helpers import ANNO_MUTATE, ANNO_READ_ONLY, format_address
 from re_mcp_ghidra.session import session
 
 log = logging.getLogger(__name__)
+
+
+def loaded_memory_bounds(memory: Any, default_space: Any = None) -> tuple[Any, Any]:
+    """Return ``(min, max)`` :class:`Address` over the *loaded* memory blocks only.
+
+    ``Memory.getMinAddress()``/``getMaxAddress()`` span every address space in
+    the program, including the non-loaded OTHER space and the overlays the ELF
+    loader bases on it, such as ``_elfSectionHeaders``.  Because
+    ``Address.getOffset()`` drops the space, an offset belonging to an unrelated
+    space gets rendered as if it were a default-space address — an ELF program
+    reports ``max_address 0x77f`` below its own ``min_address`` (#27).
+
+    A block qualifies when both hold (Ghidra 12.1.2 paths below):
+
+    * ``Address.isLoadedMemoryAddress()`` — rejects the non-loaded spaces: the
+      OTHER space and the overlays the ELF loader bases on it
+      (``_elfSectionHeaders``, ``.shstrtab``, ``.gnu_debuglink``).  It does
+      *not* reject overlays as such — an overlay over loaded memory is itself a
+      loaded memory space and is kept.  This is what makes the ELF inversion go
+      away.
+    * ``not MemoryBlock.isArtificial()`` — rejects blocks a loader or analyzer
+      *fabricated*, which "do not exist in the same form within a
+      running/loaded process state" (``MemoryBlock.java:210-218``; the flag bit
+      is ``ARTIFICIAL = 0x10`` at ``MemoryBlock.java:51``).  This is what
+      excludes the PE ``tdb`` Thread Environment Block
+      at ``0xFF00000000``, created *after* import by the Windows analyzer
+      (``ThreadEnvironmentBlock.java:75`` names it; ``:725``/``:810`` call
+      ``setArtificial(true)``), and the ELF ``EXTERNAL`` import block
+      (``MemoryBlockUtils.java:409``).
+
+    Do **not** reach for ``MemoryBlock.isLoaded()`` here.  Its javadoc at
+    ``MemoryBlock.java:370-374`` promises "a real loaded block (i.e. RAM) and
+    not a special block containing file header data such as debug sections",
+    but its only implementation is ``return
+    startAddress.getAddressSpace().isLoadedMemorySpace();``
+    (``MemoryBlockDB.java:433-435``) — literally the address test above.  It is
+    ``True`` for all eight blocks of an analyzed ``curl.exe``, ``tdb``
+    included, so filtering on it is a no-op.
+
+    Membership is *not* narrowed further than that.  ``isInitialized()`` would
+    drop ELF ``.bss``, which is real image memory and ends the image; PE
+    ``Headers`` is genuine file content and legitimately sets ``min_address`` to
+    the image base.
+
+    When no block qualifies, a bounded fallback retries with the address test
+    alone (a program made entirely of fabricated blocks should still report its
+    extent instead of ``0x0``), and only then gives up.  That precedence —
+    exclude, then fall back rather than report nothing — is what
+    :class:`DatabaseInfoResult` and the ``docs/tools.md`` row promise.
+
+    The returned pair always comes from a *single* address space, because the
+    caller serialises ``getOffset()`` and a pair straddling two spaces
+    re-creates the very inversion #27 is about.  The space is chosen
+    deterministically: *default_space* when it holds a qualifying block,
+    otherwise the space of the qualifying block that sorts lowest under
+    ``Address.compareTo`` (space first, then offset) — never raw offsets, and
+    never dependent on ``getBlocks()`` ordering.  A block contributes only when
+    its start *and* its end lie in that space.  Testing the end is a defensive
+    invariant with no known reachable trigger: a real ``MemoryBlock`` is one
+    contiguous range inside a single address space, so it cannot straddle two.
+
+    ``default_space`` is passed in rather than derived from a ``Program`` so the
+    function stays callable with plain fake objects in the pure test suite.
+
+    Returns ``(None, None)`` when no usable block exists.
+    """
+    all_blocks = list(memory.getBlocks())
+    blocks = [
+        b for b in all_blocks if b.getStart().isLoadedMemoryAddress() and not b.isArtificial()
+    ]
+    if not blocks:
+        # Bounded fallback: keep reporting *something* for a program built
+        # entirely out of fabricated blocks, rather than 0x0/0x0.
+        blocks = [b for b in all_blocks if b.getStart().isLoadedMemoryAddress()]
+    if not blocks:
+        return (None, None)
+
+    space = None
+    if default_space is not None and any(
+        b.getStart().getAddressSpace() == default_space for b in blocks
+    ):
+        space = default_space
+    else:
+        lowest_start = None
+        for block in blocks:
+            start = block.getStart()
+            if lowest_start is None or start.compareTo(lowest_start) < 0:
+                lowest_start = start
+        space = lowest_start.getAddressSpace()
+
+    lowest = highest = None
+    for block in blocks:
+        start, end = block.getStart(), block.getEnd()
+        if start.getAddressSpace() != space or end.getAddressSpace() != space:
+            continue
+        if lowest is None or start.compareTo(lowest) < 0:
+            lowest = start
+        if highest is None or end.compareTo(highest) > 0:
+            highest = end
+    return (lowest, highest)
 
 
 class OpenDatabaseResult(BaseModel):
@@ -46,8 +147,36 @@ class DatabaseInfoResult(BaseModel):
     compiler_spec: str = Field(description="Compiler specification.")
     bitness: int = Field(description="Address size in bits.")
     endian: str = Field(description="Byte order (big/little).")
-    min_address: str = Field(description="Minimum address (hex).")
-    max_address: str = Field(description="Maximum address (hex).")
+    min_address: str = Field(
+        description=(
+            "Lowest address of loaded memory (hex). Both bounds come from one "
+            "address space - the default address space unless it holds no "
+            "qualifying block. Excluded are blocks Ghidra marks artificial "
+            "because a loader or analyzer fabricated them rather than reading "
+            "them from the image (the PE 'tdb' thread-environment block, the "
+            "ELF 'EXTERNAL' import block), and blocks outside a loaded memory "
+            "space (ELF section headers and other overlay/OTHER blocks, e.g. "
+            "'_elfSectionHeaders'). PE headers are real image content and are "
+            "kept. If that leaves nothing, the bounds fall back to whatever "
+            "loaded blocks exist, artificial ones included, so the field still "
+            "describes the program's extent."
+        )
+    )
+    max_address: str = Field(
+        description=(
+            "Highest address of loaded memory (hex). Both bounds come from one "
+            "address space - the default address space unless it holds no "
+            "qualifying block. Excluded are blocks Ghidra marks artificial "
+            "because a loader or analyzer fabricated them rather than reading "
+            "them from the image (the PE 'tdb' thread-environment block, the "
+            "ELF 'EXTERNAL' import block), and blocks outside a loaded memory "
+            "space (ELF section headers and other overlay/OTHER blocks, e.g. "
+            "'_elfSectionHeaders'). PE headers are real image content and are "
+            "kept. If that leaves nothing, the bounds fall back to whatever "
+            "loaded blocks exist, artificial ones included, so the field still "
+            "describes the program's extent."
+        )
+    )
     image_base: str = Field(description="Image base address (hex).")
     function_count: int = Field(description="Number of functions.")
     segment_count: int = Field(description="Number of memory blocks.")
@@ -115,8 +244,12 @@ def register(mcp: FastMCP) -> None:
         sym_table = program.getSymbolTable()
 
         blocks = list(mem.getBlocks())
-        min_addr = mem.getMinAddress()
-        max_addr = mem.getMaxAddress()
+        # Real image blocks only, from one address space: OTHER-space blocks
+        # and analyzer-fabricated ones (PE 'tdb', ELF 'EXTERNAL') would
+        # otherwise contribute a bare offset that renders as an unrelated
+        # default-space address (#27).
+        default_space = program.getAddressFactory().getDefaultAddressSpace()
+        min_addr, max_addr = loaded_memory_bounds(mem, default_space)
 
         entry_count = sum(1 for s in sym_table.getAllSymbols(True) if s.isExternalEntryPoint())
 
