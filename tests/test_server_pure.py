@@ -220,6 +220,10 @@ class TestDecompilationResultSchema:
             "address": "0x401000",
             "name": "main",
             "pseudocode": "int main() { return 0; }",
+            "line_count": 1,
+            "start_line": 0,
+            "max_lines": 2000,
+            "has_more": False,
         }
         obj = DecompilationResult.model_validate(data)
         assert obj.pseudocode == "int main() { return 0; }"
@@ -239,6 +243,9 @@ class TestDisassemblyResultSchema:
                 {"address": "0x401000", "disasm": "push rbp"},
                 {"address": "0x401001", "disasm": "mov rbp, rsp"},
             ],
+            "offset": 0,
+            "limit": 500,
+            "has_more": False,
         }
         obj = DisassemblyResult.model_validate(data)
         assert obj.instruction_count == 2
