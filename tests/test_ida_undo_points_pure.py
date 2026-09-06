@@ -28,6 +28,7 @@ from re_mcp.helpers import (
 )
 from re_mcp_ida.server import UNDO_POINT_EXEMPT, IDAServer
 from re_mcp_ida.session import session
+from re_mcp_ida.tools import undo as undo_mod
 
 _TOOLS_DIR = Path(__file__).resolve().parents[1] / "packages/re-mcp-ida/src/re_mcp_ida/tools"
 
@@ -233,6 +234,49 @@ async def test_wrapped_tool_keeps_signature_and_docstring(srv, create_undo_point
 # ---------------------------------------------------------------------------
 # undo/redo responses and the removed per-tool points
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_undo_response_carries_label(srv, create_undo_point, monkeypatch):
+    monkeypatch.setattr(ida_undo, "perform_undo", MagicMock(return_value=True))
+    monkeypatch.setattr(ida_undo, "perform_redo", MagicMock(return_value=True))
+    monkeypatch.setattr(
+        ida_undo, "get_undo_action_label", MagicMock(return_value="rename_function")
+    )
+    monkeypatch.setattr(ida_undo, "get_redo_action_label", MagicMock(return_value="set_comment"))
+    undo_mod.register(srv)
+
+    undone = await _call(srv, "undo")
+    assert undone.action == "undo"
+    assert undone.label == "rename_function"
+
+    redone = await _call(srv, "redo")
+    assert redone.action == "redo"
+    assert redone.label == "set_comment"
+    # undo/redo themselves never create a point (it would break the redo chain).
+    create_undo_point.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_undo_label_is_read_before_perform_undo(srv, create_undo_point, monkeypatch):
+    order: list[str] = []
+    monkeypatch.setattr(
+        ida_undo, "get_undo_action_label", lambda: order.append("label") or "rename_function"
+    )
+    monkeypatch.setattr(ida_undo, "perform_undo", lambda: order.append("perform") or True)
+    undo_mod.register(srv)
+
+    await _call(srv, "undo")
+    assert order == ["label", "perform"]
+
+
+@pytest.mark.asyncio
+async def test_undo_response_label_none_when_ida_reports_none(srv, create_undo_point, monkeypatch):
+    monkeypatch.setattr(ida_undo, "perform_undo", MagicMock(return_value=True))
+    monkeypatch.setattr(ida_undo, "get_undo_action_label", MagicMock(return_value=None))
+    undo_mod.register(srv)
+
+    assert (await _call(srv, "undo")).label is None
 
 
 @pytest.mark.parametrize("module", ["patching.py", "assemble.py"])
