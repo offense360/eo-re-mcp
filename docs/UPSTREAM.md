@@ -105,6 +105,7 @@ evidence. Status as of 2026-09-04.
 | [#42](https://github.com/offense360/eo-re-mcp/issues/42) | Ghidra | Ghidra: decompiled_code uses CR LF line endings on Windows while IDA pseudocode uses LF
 | [#43](https://github.com/offense360/eo-re-mcp/issues/43) | Ghidra | EXTERNAL-space addresses need one consistent rendering: `get_call_graph` external callees (`0x94`), `get_imports`, and `get_xrefs_from` (which now skips them after #30) | Open |
 | [#44](https://github.com/offense360/eo-re-mcp/issues/44) | Ghidra | `analyze_database` still reported min/max_address across all address spaces (residual of #27); now uses the same loaded-memory bounds as `get_database_info` (`wait_for_analysis` never carried these fields). | Fixed (746ff69) |
+| [#45](https://github.com/offense360/eo-re-mcp/issues/45) | Ghidra | `entry_point_count` differs between `get_database_info` (7) and `analyze_database` (5) on the curl ELF: three predicates for "entry point" (`get_entry_points` is a third); needs one shared helper (found while verifying #44) | Open |
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 
 ### Continuous integration on the fork
