@@ -69,6 +69,7 @@ evidence. Status as of 2026-09-04.
 | [#22](https://github.com/offense360/eo-re-mcp/issues/22) | Ghidra | Headless analysis logged a `GhidraScriptUtil.bundleHost` NPE and silently skipped script-based analyzers (pre-existing since upstream). The worker now acquires the script bundle host once before its first analysis pass and keeps it. | Fixed (67eb7df) |
 | [#23](https://github.com/offense360/eo-re-mcp/issues/23) | IDA | `Session.close()` emptied every auto-analysis queue before saving, so an unanalyzed `.i64` reported `auto_is_ok()` true on reopen, the #8 seed skipped analysis and even `analyze_database` was a no-op. The queue is now kept on close and `Session.analyze()` re-plans the whole program when nothing is queued. | Fixed (a7e87d9) |
 | [#24](https://github.com/offense360/eo-re-mcp/issues/24) | core | Design question: `open_database(run_auto_analysis=True)` on an already-analyzed database forces one full re-analysis (IDA since #23, Ghidra always); decide whether to skip when the worker reports `analyzed`. Not a double pass (first wording corrected). | Closed, keep current behaviour (decision 2026-09-06) |
+| [#25](https://github.com/offense360/eo-re-mcp/issues/25) | IDA | IDA 9.4 deprecates the `func_t *`-based `ida_funcs`/`ida_frame` API (~30 call sites warn); replacements are 9.4-only, so migration waits until 9.3 is no longer a target | Open, low priority |
 
 ### Continuous integration on the fork
 
