@@ -13,7 +13,7 @@ import ida_lines
 import ida_name
 import idautils
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from re_mcp_ida.helpers import (
     ANNO_DESTRUCTIVE,
@@ -26,6 +26,8 @@ from re_mcp_ida.helpers import (
     IDAError,
     Limit,
     Offset,
+    PseudocodeLine,
+    PseudocodeLines,
     async_paginate_iter,
     call_ida,
     check_new_name,
@@ -33,9 +35,12 @@ from re_mcp_ida.helpers import (
     collect_warnings,
     compile_filter,
     decompile_at,
+    disassembly_note,
     format_address,
     get_func_name,
     is_cancelled,
+    page_lines,
+    paginate,
     resolve_address,
     resolve_function,
 )
@@ -109,10 +114,35 @@ class DecompilationResult(BaseModel):
 
     address: str = Field(description="Function start address (hex).")
     name: str = Field(description="Function name.")
-    pseudocode: str = Field(description="Decompiled C pseudocode.")
-    warnings: list[DecompilerWarning] = Field(
-        default_factory=list, description="Non-fatal Hex-Rays warnings, if any."
+    pseudocode: str = Field(
+        description="Decompiled C pseudocode for this page (lines start_line..start_line+n-1)."
     )
+    warnings: list[DecompilerWarning] = Field(
+        default_factory=list,
+        description="Non-fatal Hex-Rays warnings for the whole function, if any.",
+    )
+    line_count: int = Field(
+        default=0, description="Total pseudocode lines in the whole function, not just this page."
+    )
+    start_line: int = Field(default=0, description="0-based line this page starts at.")
+    max_lines: int = Field(default=2000, description="Page size that was applied.")
+    has_more: bool = Field(default=False, description="True when lines after this page remain.")
+    next_line: int | None = Field(
+        default=None, description="start_line to pass for the next page, or null on the last."
+    )
+    note: str | None = Field(
+        default=None, description="How to fetch the rest, present only when has_more is true."
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _line_count_from_pseudocode(cls, data: object) -> object:
+        """An unpaged payload (no line_count) counts the lines it carries."""
+        if isinstance(data, dict) and "line_count" not in data:
+            text = data.get("pseudocode")
+            if isinstance(text, str):
+                data = {**data, "line_count": text.count("\n") + 1 if text else 0}
+        return data
 
 
 class DisassemblyInstruction(BaseModel):
@@ -127,8 +157,20 @@ class DisassemblyResult(BaseModel):
 
     address: str = Field(description="Function start address (hex).")
     name: str = Field(description="Function name.")
-    instruction_count: int = Field(description="Number of instructions.")
-    instructions: list[DisassemblyInstruction] = Field(description="Instruction listing.")
+    instruction_count: int = Field(
+        description="Total instructions in the function, not just this page."
+    )
+    instructions: list[DisassemblyInstruction] = Field(
+        description="Instructions on this page (offset..offset+n-1)."
+    )
+    offset: int = Field(default=0, description="Index of the first instruction on this page.")
+    limit: int = Field(default=500, description="Page size that was applied.")
+    has_more: bool = Field(
+        default=False, description="True when instructions after this page remain."
+    )
+    note: str | None = Field(
+        default=None, description="How to fetch the rest, present only when has_more is true."
+    )
 
 
 class DeleteFunctionResult(BaseModel):
@@ -351,16 +393,23 @@ def register(mcp: FastMCP):
             else None,
         )
 
-    def _decompile_one(target: str) -> DecompilationResult:
-        """Decompile a single function and return its pseudocode."""
+    def _decompile_one(target: str, start_line: int, max_lines: int) -> DecompilationResult:
+        """Decompile a single function and return one page of its pseudocode."""
         cfunc, func = decompile_at(target)
         sv = cfunc.get_pseudocode()
         lines = [ida_lines.tag_remove(sv[i].line) for i in range(sv.size())]
+        page = page_lines(lines, start_line, max_lines)
         return DecompilationResult(
             address=format_address(func.start_ea),
             name=get_func_name(func.start_ea),
-            pseudocode="\n".join(lines),
+            pseudocode=page["text"],
             warnings=collect_warnings(cfunc),
+            line_count=page["line_count"],
+            start_line=page["start_line"],
+            max_lines=page["max_lines"],
+            has_more=page["has_more"],
+            next_line=page["next_line"],
+            note=page["note"],
         )
 
     @mcp.tool(
@@ -372,11 +421,21 @@ def register(mcp: FastMCP):
     def decompile_function(
         address: Address = "",
         name: str = "",
+        start_line: PseudocodeLine = 0,
+        max_lines: PseudocodeLines = 2000,
     ) -> DecompilationResult:
         """Decompile ONE function to pseudocode using Hex-Rays.
 
         Takes a single function (by `address` OR `name`) — no list parameter.
         For many functions in one request, see the `batch` meta-tool.
+
+        Returns up to `max_lines` lines (default 2000) from `start_line`;
+        `line_count` is the whole function. Pass a larger `max_lines` to get
+        everything at once. When `has_more` is true, `note` and `next_line`
+        say how to fetch the rest. Line numbers match get_pseudocode_line_map
+        (0-based, over the whole function): line i of the page is line
+        start_line+i of the function. `warnings` always covers the whole
+        function.
 
         Requires a Hex-Rays decompiler license. For quick inspection without
         decompilation, use disassemble_function (faster, no license needed).
@@ -388,10 +447,12 @@ def register(mcp: FastMCP):
         Args:
             address: Address of the function (hex string or symbol).
             name: Name of the function to decompile.
+            start_line: 0-based pseudocode line to start from.
+            max_lines: Maximum number of lines to return (no upper bound).
         """
         if not address and not name:
             raise IDAError("Provide either address or name", error_type="InvalidArgument")
-        return _decompile_one(address or name)
+        return _decompile_one(address or name, start_line, max_lines)
 
     @mcp.tool(
         annotations=ANNO_READ_ONLY,
@@ -400,11 +461,18 @@ def register(mcp: FastMCP):
     @session.require_open
     def disassemble_function(
         address: Address,
+        offset: Offset = 0,
+        limit: Limit = 500,
     ) -> DisassemblyResult:
-        """Disassemble the ENTIRE function containing the given address.
+        """Disassemble the function containing the given address, one page at a time.
 
         Takes a SINGLE address — no start/end range and no list parameter.
         For many functions in one request, see the `batch` meta-tool.
+
+        Returns up to `limit` instructions (default 500) starting at `offset`;
+        `instruction_count` is the whole function. Pass a larger `limit` to get
+        everything at once. When `has_more` is true, `note` says which `offset`
+        fetches the rest.
 
         Faster than decompile_function and does not require Hex-Rays.
         Use this for quick inspection of function logic or when only
@@ -415,6 +483,8 @@ def register(mcp: FastMCP):
 
         Args:
             address: Address or symbol name of the function.
+            offset: Index of the first instruction to return (0-based).
+            limit: Maximum number of instructions to return (no upper bound).
         """
         func = resolve_function(address)
 
@@ -425,13 +495,18 @@ def register(mcp: FastMCP):
             }
             for item_ea in idautils.FuncItems(func.start_ea)
         ]
+        page = paginate(instructions, offset, limit)
 
         func_name = get_func_name(func.start_ea)
         return DisassemblyResult(
             address=format_address(func.start_ea),
             name=func_name,
-            instruction_count=len(instructions),
-            instructions=instructions,
+            instruction_count=page["total"],
+            instructions=page["items"],
+            offset=page["offset"],
+            limit=page["limit"],
+            has_more=page["has_more"],
+            note=disassembly_note(page["offset"], len(page["items"]), page["total"]),
         )
 
     @mcp.tool(

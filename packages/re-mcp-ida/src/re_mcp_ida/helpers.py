@@ -71,6 +71,8 @@ __all__ = [
     "Limit",
     "Offset",
     "OperandIndex",
+    "PseudocodeLine",
+    "PseudocodeLines",
     "async_paginate_iter",
     "build_strlist",
     "call_ida",
@@ -83,6 +85,7 @@ __all__ = [
     "decode_insn_at",
     "decode_string",
     "decompile_at",
+    "disassembly_note",
     "format_address",
     "format_permissions",
     "get_func_name",
@@ -90,6 +93,7 @@ __all__ = [
     "ida_dispatch",
     "is_bad_addr",
     "is_cancelled",
+    "page_lines",
     "paginate",
     "paginate_iter",
     "parse_address",
@@ -116,6 +120,59 @@ call_ida = dispatch_to_main
 # ---------------------------------------------------------------------------
 
 OperandIndex = Annotated[int, Field(description="Operand index (0-based).", ge=0)]
+PseudocodeLine = Annotated[int, Field(description="0-based pseudocode line to start from.", ge=0)]
+PseudocodeLines = Annotated[
+    int, Field(description="Maximum number of pseudocode lines to return.", ge=1)
+]
+
+
+# ---------------------------------------------------------------------------
+# Paging helpers for decompile_function / disassemble_function (#41)
+# ---------------------------------------------------------------------------
+
+
+def page_lines(lines: list[str], start_line: int, max_lines: int) -> dict[str, Any]:
+    """Cut ``lines[start_line:start_line + max_lines]`` into one pseudocode page.
+
+    Returns ``{"text", "line_count", "start_line", "max_lines", "has_more",
+    "next_line", "note"}``.  ``line_count`` is the whole function; a
+    ``start_line`` past the end yields an empty page, not an error.  Line ``i``
+    of the page is line ``start_line + i`` of the whole (0-based, the same
+    numbering as ``get_pseudocode_line_map``).
+    """
+    start_line = max(0, start_line)
+    max_lines = max(1, max_lines)
+    total = len(lines)
+    page = lines[start_line : start_line + max_lines]
+    has_more = start_line + len(page) < total
+    next_line = start_line + len(page) if has_more else None
+    note = None
+    if has_more:
+        end = start_line + len(page) - 1
+        note = (
+            f"Showing lines {start_line}-{end} of {total}; "
+            f"call again with start_line={next_line} for more."
+        )
+    return {
+        "text": "\n".join(page),
+        "line_count": total,
+        "start_line": start_line,
+        "max_lines": max_lines,
+        "has_more": has_more,
+        "next_line": next_line,
+        "note": note,
+    }
+
+
+def disassembly_note(offset: int, page_len: int, total: int) -> str | None:
+    """Follow-up hint for a disassembly page, or ``None`` when the page is the last."""
+    if offset + page_len >= total or page_len == 0:
+        return None
+    end = offset + page_len - 1
+    return (
+        f"Showing instructions {offset}-{end} of {total}; "
+        f"call again with offset={offset + page_len} for more."
+    )
 
 
 # ---------------------------------------------------------------------------
