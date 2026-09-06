@@ -71,23 +71,40 @@ evidence. Status as of 2026-09-04.
 | [#23](https://github.com/offense360/eo-re-mcp/issues/23) | IDA | `Session.close()` emptied every auto-analysis queue before saving, so an unanalyzed `.i64` reported `auto_is_ok()` true on reopen, the #8 seed skipped analysis and even `analyze_database` was a no-op. The queue is now kept on close and `Session.analyze()` re-plans the whole program when nothing is queued. | Fixed (a7e87d9) |
 | [#24](https://github.com/offense360/eo-re-mcp/issues/24) | core | Design question: `open_database(run_auto_analysis=True)` on an already-analyzed database forces one full re-analysis (IDA since #23, Ghidra always); decide whether to skip when the worker reports `analyzed`. Not a double pass (first wording corrected). | Closed, keep current behaviour (decision 2026-09-06) |
 | [#25](https://github.com/offense360/eo-re-mcp/issues/25) | IDA | IDA 9.4 deprecates the `func_t *`-based `ida_funcs`/`ida_frame` API (~30 call sites); replacements are 9.4-only. Decision 2026-09-06: keep the current API; migrate and raise the floor to 9.4 when Hex-Rays announces removal or a 9.4-only API is needed. | Deferred, trigger: removal notice or 9.4-only feature |
-| [#26](https://github.com/offense360/eo-re-mcp/issues/26) | IDA | IDA: undo/redo report 'Nothing to undo' after rename/comment/type changes; only patch_bytes/patch_asm create undo points, and undo then reverts every change since that point (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#27](https://github.com/offense360/eo-re-mcp/issues/27) | Ghidra | Ghidra: get_database_info.max_address is the raw offset of the highest address in any address space (ELF reports 0x77F below min_address 0x100000) (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#28](https://github.com/offense360/eo-re-mcp/issues/28) | Ghidra | Ghidra: an address above 2^63-1 leaks 'int too big to convert' (OverflowError) with no error_type (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#29](https://github.com/offense360/eo-re-mcp/issues/29) | Ghidra | Ghidra: get_database_info.function_count (2006) disagrees with list_functions.total (1775) because external functions are counted only by the former (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#30](https://github.com/offense360/eo-re-mcp/issues/30) | Ghidra | Ghidra: get_xrefs_from renders stack/register references as absolute addresses (to_address "0x8", ref_type WRITE) (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#31](https://github.com/offense360/eo-re-mcp/issues/31) | Ghidra | Ghidra: get_database_info.file_path is Ghidra's '/C:/...' executable path while open_database/list_databases return the OS path (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#32](https://github.com/offense360/eo-re-mcp/issues/32) | IDA | IDA: parse_type_declaration failures say only 'Failed to parse declaration' (Ghidra returns the parser's message) (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#33](https://github.com/offense360/eo-re-mcp/issues/33) | IDA | IDA: rename_function and set_comment failures do not say why ('Failed to rename function to ...', 'Failed to set comment at 0x1') (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#34](https://github.com/offense360/eo-re-mcp/issues/34) | core | core: batch with a failing operation returns the whole BatchResult as a JSON string inside the error (triple-encoded), even with stop_on_error=False (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#35](https://github.com/offense360/eo-re-mcp/issues/35) | IDA | IDA: list_local_types has no filter_pattern (Ghidra's does) — pinned tool with different parameters (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#36](https://github.com/offense360/eo-re-mcp/issues/36) | all | set_type on a function address: IDA applies the prototype, Ghidra rejects it with "Unknown data type: '<whole prototype>'" and does not point at set_function_type (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#37](https://github.com/offense360/eo-re-mcp/issues/37) | all | find_code_by_string returns different shapes per backend (Ghidra: paginated items with code_address; IDA: total_strings_scanned/unique_functions, no code_address) (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#38](https://github.com/offense360/eo-re-mcp/issues/38) | all | get_database_info: IDA exposes entry_point, Ghidra does not (client must search_tools → call get_entry_points); other fields differ too (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#39](https://github.com/offense360/eo-re-mcp/issues/39) | Ghidra | Ghidra: undo/redo responses do not say what was undone; reverting one rename after a normal session took 6 blind undo calls (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#40](https://github.com/offense360/eo-re-mcp/issues/40) | IDA | IDA: get_pseudocode_line_map is 3-4x slower than decompile_function on a 1412-line function (4.9-9.8 s vs 1.7-2.3 s) (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#41](https://github.com/offense360/eo-re-mcp/issues/41) | all | disassemble_function / decompile_function have no pagination or size cap: 478 KB and 123 KB responses for the largest ELF function (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#42](https://github.com/offense360/eo-re-mcp/issues/42) | Ghidra | Ghidra: decompiled_code uses CR LF line endings on Windows while IDA pseudocode uses LF (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#26](https://github.com/offense360/eo-re-mcp/issues/26) | IDA | `undo`/`redo` only worked after `patch_bytes`/`patch_asm` (the only tools that created undo points, inherited from upstream) and then reverted everything since. `IDAServer.tool()` now creates an undo point before every tool whose annotations say `readOnlyHint: False` (lifecycle, analysis and undo/redo exempt), and responses carry the reverted call's `label`. Verified on IDA 9.4. | Fixed (91cee9e) |
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#27](https://github.com/offense360/eo-re-mcp/issues/27) | Ghidra | Ghidra: get_database_info.max_address is the raw offset of the highest address in any address space (ELF reports 0x77F below min_address 0x100000)
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#28](https://github.com/offense360/eo-re-mcp/issues/28) | Ghidra | Ghidra: an address above 2^63-1 leaks 'int too big to convert' (OverflowError) with no error_type
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#29](https://github.com/offense360/eo-re-mcp/issues/29) | Ghidra | Ghidra: get_database_info.function_count (2006) disagrees with list_functions.total (1775) because external functions are counted only by the former
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#30](https://github.com/offense360/eo-re-mcp/issues/30) | Ghidra | Ghidra: get_xrefs_from renders stack/register references as absolute addresses (to_address "0x8", ref_type WRITE)
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#31](https://github.com/offense360/eo-re-mcp/issues/31) | Ghidra | Ghidra: get_database_info.file_path is Ghidra's '/C:/...' executable path while open_database/list_databases return the OS path
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#32](https://github.com/offense360/eo-re-mcp/issues/32) | IDA | IDA: parse_type_declaration failures say only 'Failed to parse declaration' (Ghidra returns the parser's message)
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#33](https://github.com/offense360/eo-re-mcp/issues/33) | IDA | IDA: rename_function and set_comment failures do not say why ('Failed to rename function to ...', 'Failed to set comment at 0x1')
+ (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#34](https://github.com/offense360/eo-re-mcp/issues/34) | core | core: batch with a failing operation returns the whole BatchResult as a JSON string inside the error (triple-encoded), even with stop_on_error=False
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#35](https://github.com/offense360/eo-re-mcp/issues/35) | IDA | IDA: list_local_types has no filter_pattern (Ghidra's does) — pinned tool with different parameters
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#36](https://github.com/offense360/eo-re-mcp/issues/36) | all | set_type on a function address: IDA applies the prototype, Ghidra rejects it with "Unknown data type: '<whole prototype>'" and does not point at set_function_type
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#37](https://github.com/offense360/eo-re-mcp/issues/37) | all | find_code_by_string returns different shapes per backend (Ghidra: paginated items with code_address; IDA: total_strings_scanned/unique_functions, no code_address)
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#38](https://github.com/offense360/eo-re-mcp/issues/38) | all | get_database_info: IDA exposes entry_point, Ghidra does not (client must search_tools → call get_entry_points); other fields differ too
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#39](https://github.com/offense360/eo-re-mcp/issues/39) | Ghidra | Ghidra: undo/redo responses do not say what was undone; reverting one rename after a normal session took 6 blind undo calls
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#40](https://github.com/offense360/eo-re-mcp/issues/40) | IDA | IDA: get_pseudocode_line_map is 3-4x slower than decompile_function on a 1412-line function (4.9-9.8 s vs 1.7-2.3 s)
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#41](https://github.com/offense360/eo-re-mcp/issues/41) | all | disassemble_function / decompile_function have no pagination or size cap: 478 KB and 123 KB responses for the largest ELF function
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#42](https://github.com/offense360/eo-re-mcp/issues/42) | Ghidra | Ghidra: decompiled_code uses CR LF line endings on Windows while IDA pseudocode uses LF
+ (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 
 ### Continuous integration on the fork
 
