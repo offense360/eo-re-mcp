@@ -26,17 +26,21 @@ from re_mcp_ghidra.tools.xrefs import (
 
 
 class FakeRefAddr:
-    """Stands in for ``Address``: only the two calls the filter makes."""
+    """Stands in for ``Address``: only the calls the filters make."""
 
-    def __init__(self, offset: int, *, memory: bool = True) -> None:
+    def __init__(self, offset: int, *, memory: bool = True, external: bool = False) -> None:
         self.offset = offset
         self.memory = memory
+        self.external = external
 
     def getOffset(self) -> int:
         return self.offset
 
     def isMemoryAddress(self) -> bool:
         return self.memory
+
+    def isExternalAddress(self) -> bool:
+        return self.external
 
 
 class FakeRefType:
@@ -105,7 +109,7 @@ def external_ref(offset: int = 0xB0) -> FakeRef:
     one: ``0xB0`` looks like memory but no other tool can resolve it.
     """
     return FakeRef(
-        FakeRefAddr(offset, memory=False),
+        FakeRefAddr(offset, memory=False, external=True),
         FakeRefType("UNCONDITIONAL_CALL", call=True),
         external=True,
     )
@@ -170,12 +174,19 @@ class TestCollectXrefsFrom:
         ]
         assert skipped == 2
 
-    def test_external_reference_is_counted_as_skipped(self):
-        """A thunk that references an imported symbol now yields no item; the
-        reference is counted in ``skipped_non_memory`` like a stack one."""
+    def test_external_reference_is_kept_as_an_item(self):
+        """A thunk that references an imported symbol yields an item (rendered
+        by the tool as ``EXTERNAL:<library>::<name>``, #43); only stack,
+        register and constant targets count as ``skipped_non_memory``."""
         items, skipped = collect_xrefs_from([memory_ref(), external_ref()], _to_address)
-        assert len(items) == 1
-        assert skipped == 1
+        assert len(items) == 2
+        assert skipped == 0
+
+    def test_external_is_kept_while_stack_and_register_are_still_skipped(self):
+        refs = [external_ref(), stack_ref(), memory_ref(), register_ref()]
+        items, skipped = collect_xrefs_from(refs, _to_address)
+        assert [i["to_address"] for i in items] == ["0xB0", "0x140007D00"]
+        assert skipped == 2
 
     def test_none_target_is_counted_as_skipped(self):
         items, skipped = collect_xrefs_from([memory_ref(), FakeRef(None)], _to_address)
@@ -230,11 +241,13 @@ class TestXrefsFromResult:
         assert field.description
         assert "stack" in field.description.lower()
 
-    def test_field_description_names_external_references(self):
-        """The predicate drops EXTERNAL-space targets as well as stack, register
-        and constant ones.  A description that lists only the latter three
-        understates what is missing from ``items``."""
+    def test_field_description_says_external_references_are_kept(self):
+        """Only stack, register and constant targets are skipped; a reference to
+        an imported symbol stays in ``items`` with an ``EXTERNAL:`` address
+        (#43).  The description must say so rather than list EXTERNAL among
+        the omissions."""
         desc = XrefsFromResult.model_fields["skipped_non_memory"].description
+        assert "kept" in desc.lower()
         assert "external" in desc.lower()
 
 

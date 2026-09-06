@@ -119,8 +119,8 @@ Cross-reference queries and call graph analysis.
 | Tool | Description |
 |------|-------------|
 | `get_xrefs_to` | Get all references TO an address (what references it). For multiple addresses, use the `batch` meta-tool. Paginated. |
-| `get_xrefs_from` | Get all references FROM an address (what it references). Paginated. References whose target is not a memory address are omitted: stack, register and constant targets, and references into Ghidra's EXTERNAL space — a reference to an imported symbol yields no item. `skipped_non_memory` reports how many were left out across all references from the address, not just the current page (Ghidra). |
-| `get_call_graph` | Get the call graph for a function — callers and callees. `depth` controls traversal (1-3, default 1). |
+| `get_xrefs_from` | Get all references FROM an address (what it references). Paginated. References whose target is not a memory address are omitted: stack, register and constant targets. A reference to an imported symbol (Ghidra's EXTERNAL space) is kept, with `to_address` rendered as `EXTERNAL:<library>::<name>` and `library` filled in. `skipped_non_memory` reports how many were left out across all references from the address, not just the current page (Ghidra). |
+| `get_call_graph` | Get the call graph for a function — callers and callees. `depth` controls traversal (1-3, default 1). Ghidra: an imported function appears among the callees once, by name, with address `EXTERNAL:<library>::<name>` and `thunk_address` (its stub / PLT entry), and is not expanded. |
 
 ## Cross-Reference Manipulation
 
@@ -172,7 +172,7 @@ Imported functions, exported symbols, and entry points.
 
 | Tool | Description |
 |------|-------------|
-| `get_imports` | List imported functions, optionally filtered by module name. Paginated. |
+| `get_imports` | List imported functions, optionally filtered by module name. Paginated. Ghidra: `address` is the import's thunk (PE stub / ELF PLT entry, null when only reached through the IAT) and `external_address` is the `EXTERNAL:<library>::<name>` form used by `get_xrefs_from` and `get_call_graph`. |
 | `get_exports` | List exported symbols. Paginated. |
 | `get_entry_points` | List entry points. Paginated. One item per entry point address; name is the primary symbol at that address (Ghidra: the same set `get_database_info.entry_point_count` counts). |
 | `set_import_name` | Set the name of an import entry (IDA). |

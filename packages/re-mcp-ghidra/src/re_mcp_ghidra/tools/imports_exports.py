@@ -13,6 +13,7 @@ from re_mcp_ghidra.helpers import (
     ANNO_READ_ONLY,
     Limit,
     Offset,
+    describe_external,
     format_address,
     paginate_iter,
 )
@@ -24,8 +25,20 @@ class ImportItem(BaseModel):
     """An imported symbol."""
 
     module: str = Field(description="External library/module name.")
-    address: str = Field(description="Import thunk address (hex).")
+    address: str | None = Field(
+        description=(
+            "Memory address of the import's thunk (PE stub / ELF PLT entry); null "
+            "when the import is only reached through its IAT pointer. Use "
+            "get_xrefs_to on it to find direct callers."
+        )
+    )
     name: str = Field(description="Import name.")
+    external_address: str = Field(
+        description=(
+            "EXTERNAL:<library>::<name>; the value get_xrefs_from and "
+            "get_call_graph show for this import."
+        )
+    )
 
 
 class ExportItem(BaseModel):
@@ -53,8 +66,11 @@ def register(mcp: FastMCP) -> None:
         """List all imported functions/symbols.
 
         Use module_filter to narrow results to a specific library (e.g.
-        "kernel32", "libc"). After finding an import address, use
-        get_xrefs_to to find all code that calls it.
+        "kernel32", "libc"). ``address`` is the import's thunk (PE stub or
+        ELF PLT entry) — use get_xrefs_to on it to find all code that calls
+        it; it is null for an import only reached through its IAT pointer.
+        ``external_address`` is the EXTERNAL:<library>::<name> form that
+        get_xrefs_from and get_call_graph show for the same import.
 
         Args:
             module_filter: Optional substring to filter module/library names (case-insensitive).
@@ -73,11 +89,12 @@ def register(mcp: FastMCP) -> None:
                     sym = ext_loc.getSymbol()
                     if sym is None:
                         continue
-                    addr = ext_loc.getExternalSpaceAddress()
+                    ext = describe_external(program, ext_loc.getExternalSpaceAddress())
                     yield ImportItem(
                         module=lib_name,
-                        address=format_address(addr.getOffset()) if addr else "0x0",
+                        address=ext["thunk_address"],
                         name=sym.getName(),
+                        external_address=ext["address"],
                     ).model_dump()
 
         return paginate_iter(_gen(), offset, limit)

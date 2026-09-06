@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from typing import Any
 
 from re_mcp.helpers import (
     ANNO_DESTRUCTIVE,
@@ -52,8 +53,10 @@ __all__ = [
     "call_ghidra",
     "check_range_in_memory",
     "compile_filter",
+    "describe_external",
     "format_address",
     "format_permissions",
+    "is_external_address",
     "paginate",
     "paginate_iter",
     "parse_address",
@@ -69,6 +72,43 @@ __all__ = [
 
 # Backend dispatch alias
 call_ghidra = dispatch_to_main
+
+
+# ---------------------------------------------------------------------------
+# EXTERNAL space (imported symbols)
+# ---------------------------------------------------------------------------
+
+
+def is_external_address(addr: Any) -> bool:
+    """True when *addr* lies in Ghidra's artificial EXTERNAL address space."""
+    return addr is not None and addr.isExternalAddress()
+
+
+def describe_external(program: Any, addr: Any) -> dict[str, Any]:
+    """Render an EXTERNAL-space address (an imported symbol) for tool output (#43).
+
+    Returns ``address`` = ``"EXTERNAL:<library>::<name>"`` (Ghidra's own
+    qualified name, ``Symbol.getName(True)``; ``"EXTERNAL:0x<offset>"`` when no
+    symbol is there), ``symbol``, ``library`` and ``thunk_address`` — the memory
+    address of the import's first-hop thunk (PE stub or ELF PLT entry) or
+    ``None`` when the import is only reached through its IAT pointer.
+
+    The offset of an EXTERNAL address is a slot index (``free`` is
+    ``EXTERNAL:0xb0``), so it must never be formatted as a memory address.
+    ``ExternalLocation.getAddress()`` is not used either: on a PE it holds a
+    meaningless value (negative for ordinal imports).
+    """
+    sym = program.getSymbolTable().getPrimarySymbol(addr)
+    loc = program.getExternalManager().getExternalLocation(sym) if sym else None
+    func = loc.getFunction() if loc and loc.isFunction() else None
+    # Java null (no thunk) or an empty array: ``if thunks`` handles both.
+    thunks = func.getFunctionThunkAddresses(False) if func else None
+    return {
+        "address": f"EXTERNAL:{sym.getName(True)}" if sym else f"EXTERNAL:{addr.getOffset():#x}",
+        "symbol": sym.getName() if sym else "",
+        "library": loc.getLibraryName() if loc else "",
+        "thunk_address": format_address(thunks[0].getOffset()) if thunks else None,
+    }
 
 
 # ---------------------------------------------------------------------------

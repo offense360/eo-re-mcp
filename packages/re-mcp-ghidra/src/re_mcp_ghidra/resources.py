@@ -16,6 +16,7 @@ from re_mcp.exceptions import BackendError
 
 from re_mcp_ghidra.helpers import (
     compile_filter,
+    describe_external,
     format_address,
     paginate_iter,
 )
@@ -56,10 +57,14 @@ def _iter_imports(filt: re.Pattern | None = None) -> Iterator[dict]:
             name = ext_loc.getLabel()
             if filt and not filt.search(name) and not filt.search(lib_name):
                 continue
-            addr = ext_loc.getAddress()
+            # Same rendering as get_imports (#43): thunk address or None, plus
+            # the EXTERNAL:<library>::<name> form.  ExternalLocation.getAddress()
+            # is meaningless on a PE (negative for ordinal imports).
+            ext = describe_external(program, ext_loc.getExternalSpaceAddress())
             yield {
                 "module": lib_name,
-                "address": format_address(addr.getOffset()) if addr else "EXTERNAL",
+                "address": ext["thunk_address"],
+                "external_address": ext["address"],
                 "name": name,
             }
 

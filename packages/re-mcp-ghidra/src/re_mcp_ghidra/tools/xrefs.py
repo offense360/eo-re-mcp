@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -14,7 +16,9 @@ from re_mcp_ghidra.helpers import (
     Address,
     Limit,
     Offset,
+    describe_external,
     format_address,
+    is_external_address,
     paginate_iter,
     resolve_address,
 )
@@ -29,10 +33,19 @@ class XrefTo(BaseModel):
 
 
 class XrefFrom(BaseModel):
-    to_address: str = Field(description="Target address (hex).")
+    to_address: str = Field(
+        description=("Target address (hex), or EXTERNAL:<library>::<name> for an imported symbol.")
+    )
     to_function: str = Field(description="Target function name, if any.")
     ref_type: str = Field(description="Reference type.")
     is_call: bool = Field(description="True if this is a call reference.")
+    library: str | None = Field(
+        default=None,
+        description=(
+            "Library of the imported symbol when to_address is in Ghidra's "
+            "EXTERNAL space, else null."
+        ),
+    )
 
 
 class XrefsFromResult(BaseModel):
@@ -47,9 +60,9 @@ class XrefsFromResult(BaseModel):
         default=0,
         description=(
             "References omitted from items because their target is not a memory "
-            "address: stack, register and constant targets, and references into "
-            "Ghidra's EXTERNAL space (an imported symbol). Counted across all "
-            "references from the address, not just this page."
+            "address: stack, register and constant targets only; references to "
+            "imported symbols are kept as items with an EXTERNAL:... address. "
+            "Counted across all references from the address, not just this page."
         ),
     )
 
@@ -58,7 +71,15 @@ class CallGraphEntry(BaseModel):
     name: str
     address: str
     callers: list[dict] = Field(default_factory=list)
-    callees: list[dict] = Field(default_factory=list)
+    callees: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Called functions; external callees (imports) appear once, by name, "
+            "with address EXTERNAL:<library>::<name>, symbol, library and "
+            "thunk_address (memory address of the import's thunk, or null), and "
+            "are never expanded further."
+        ),
+    )
 
 
 def is_memory_reference(ref) -> bool:
@@ -82,8 +103,19 @@ def is_memory_reference(ref) -> bool:
     )
 
 
+def is_renderable_reference(ref) -> bool:
+    """True when ``get_xrefs_from`` can show *ref* as an item.
+
+    Memory targets render as hex addresses (:func:`is_memory_reference`);
+    EXTERNAL-space targets — an imported symbol — render by qualified name
+    through :func:`re_mcp_ghidra.helpers.describe_external` (#43).  Stack,
+    register and constant targets remain unrenderable.
+    """
+    return is_memory_reference(ref) or is_external_address(ref.getToAddress())
+
+
 def collect_xrefs_from(refs, build_item) -> tuple[list, int]:
-    """Split *refs* into rendered items and a count of the non-memory ones.
+    """Split *refs* into rendered items and a count of the non-renderable ones.
 
     *build_item* renders one kept reference; it is passed in because the tool's
     renderer closes over the program's ``FunctionManager``, which this module
@@ -93,11 +125,30 @@ def collect_xrefs_from(refs, build_item) -> tuple[list, int]:
     items: list = []
     skipped = 0
     for ref in refs:
-        if not is_memory_reference(ref):
+        if not is_renderable_reference(ref):
             skipped += 1
             continue
         items.append(build_item(ref))
     return items, skipped
+
+
+def external_callee(func) -> Any | None:
+    """The external (imported) function *func* stands for, or ``None``.
+
+    ``Function.getCalledFunctions()`` reports a PE import twice — the thunk at
+    its stub (``ram:0x140004210``) and the external function itself
+    (``EXTERNAL:0xb0``) — and an ELF import via its PLT thunk.  Both collapse
+    onto the external so ``get_call_graph`` lists the import once, by name
+    (#43).  An internal thunk (``_guard_dispatch_icall``) is not an import and
+    is left alone.
+    """
+    if func.isExternal():
+        return func
+    if func.isThunk():
+        target = func.getThunkedFunction(True)
+        if target is not None and target.isExternal():
+            return target
+    return None
 
 
 def register(mcp: FastMCP) -> None:
@@ -139,9 +190,10 @@ def register(mcp: FastMCP) -> None:
         """Get all cross-references FROM an address.
 
         References whose target is not a memory address are omitted — stack,
-        register and constant targets, and references into Ghidra's EXTERNAL
-        space (an imported symbol). Rendering those offsets as hex is
-        misleading. The number omitted is reported as ``skipped_non_memory``.
+        register and constant targets — because rendering those offsets as hex
+        is misleading; the number omitted is reported as ``skipped_non_memory``.
+        A reference to an imported symbol (Ghidra's EXTERNAL space) is kept and
+        rendered as ``EXTERNAL:<library>::<name>`` with ``library`` filled in.
         """
         program = session.program
         ref_mgr = program.getReferenceManager()
@@ -150,8 +202,17 @@ def register(mcp: FastMCP) -> None:
 
         def _render(ref) -> dict:
             to_addr = ref.getToAddress()
-            func = func_mgr.getFunctionContaining(to_addr)
             ref_type = ref.getReferenceType()
+            if is_external_address(to_addr):
+                ext = describe_external(program, to_addr)
+                return XrefFrom(
+                    to_address=ext["address"],
+                    to_function=ext["symbol"],
+                    ref_type=str(ref_type),
+                    is_call=ref_type.isCall(),
+                    library=ext["library"],
+                ).model_dump()
+            func = func_mgr.getFunctionContaining(to_addr)
             return XrefFrom(
                 to_address=format_address(to_addr.getOffset()),
                 to_function=func.getName() if func else "",
@@ -171,6 +232,10 @@ def register(mcp: FastMCP) -> None:
     ) -> CallGraphEntry:
         """Get the call graph around a function (callers and callees).
 
+        An imported function appears among the callees once, by name, with an
+        ``EXTERNAL:<library>::<name>`` address and the memory address of its
+        thunk; it has no body and is not expanded at any depth.
+
         Args:
             address: Function address.
             depth: Recursion depth (1-3).
@@ -188,13 +253,15 @@ def register(mcp: FastMCP) -> None:
 
         return _build_call_graph(func, depth, set())
 
-    def _build_call_graph(func, depth: int, visited: set) -> CallGraphEntry:
+    def _build_call_graph(func, depth: int, visited: set[str]) -> CallGraphEntry:
+        # Keys carry the address space: an EXTERNAL slot offset must not
+        # collide with a memory offset (#43).
         addr = func.getEntryPoint()
-        key = addr.getOffset()
+        key = str(addr)
         if key in visited or depth <= 0:
             return CallGraphEntry(
                 name=func.getName(),
-                address=format_address(key),
+                address=format_address(addr.getOffset()),
             )
         visited.add(key)
 
@@ -207,7 +274,7 @@ def register(mcp: FastMCP) -> None:
         for ref in ref_mgr.getReferencesTo(addr):
             if ref.getReferenceType().isCall():
                 caller_func = func_mgr.getFunctionContaining(ref.getFromAddress())
-                if caller_func and caller_func.getEntryPoint().getOffset() not in visited:
+                if caller_func and str(caller_func.getEntryPoint()) not in visited:
                     if depth > 1:
                         callers.append(
                             _build_call_graph(caller_func, depth - 1, visited).model_dump()
@@ -220,26 +287,39 @@ def register(mcp: FastMCP) -> None:
                             }
                         )
 
-        # Callees
+        # Callees.  An import shows up as its thunk and/or its external
+        # function; both collapse onto one EXTERNAL entry that is never
+        # expanded (it has no body).
         callees = []
+        seen_external: set[str] = set()
         called = func.getCalledFunctions(None)
         if called:
             for callee in called:
-                callee_key = callee.getEntryPoint().getOffset()
-                if callee_key not in visited:
+                ext = external_callee(callee)
+                if ext is not None:
+                    entry = {
+                        "name": ext.getName(),
+                        **describe_external(program, ext.getEntryPoint()),
+                    }
+                    if entry["address"] not in seen_external:
+                        seen_external.add(entry["address"])
+                        callees.append(entry)
+                    continue
+                callee_addr = callee.getEntryPoint()
+                if str(callee_addr) not in visited:
                     if depth > 1:
                         callees.append(_build_call_graph(callee, depth - 1, visited).model_dump())
                     else:
                         callees.append(
                             {
                                 "name": callee.getName(),
-                                "address": format_address(callee_key),
+                                "address": format_address(callee_addr.getOffset()),
                             }
                         )
 
         return CallGraphEntry(
             name=func.getName(),
-            address=format_address(key),
+            address=format_address(addr.getOffset()),
             callers=callers,
             callees=callees,
         )
