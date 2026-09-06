@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import ida_hexrays
+import ida_idp
 import ida_nalt
 import ida_typeinf
 import idc
@@ -13,12 +15,16 @@ from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from re_mcp_ida.helpers import (
+    ANNO_DESTRUCTIVE,
     ANNO_MUTATE,
     ANNO_READ_ONLY,
     Address,
     IDAError,
+    decode_insn_at,
     format_address,
     get_func_name,
+    parse_type,
+    resolve_address,
     resolve_function,
 )
 from re_mcp_ida.session import session
@@ -66,6 +72,42 @@ class SetCallingConventionResult(BaseModel):
     name: str = Field(description="Function name.")
     old_convention: str = Field(description="Previous calling convention.")
     convention: str = Field(description="New calling convention.")
+
+
+class SetCallTypeResult(BaseModel):
+    """Result of forcing (or clearing) a call site's callee type."""
+
+    address: str = Field(description="Call site address (hex).")
+    function: str = Field(description="Containing function address (hex).")
+    type: str = Field(description="Applied callee prototype (empty once cleared).")
+
+
+def apply_call_site_type(ea: int, tinfo: ida_typeinf.tinfo_t, func_start: int) -> None:
+    """Pin *tinfo* as the callee type of the call at *ea* and drop the cached decompilation.
+
+    The type goes on operand 0 of the call instruction (``set_op_tinfo``), which
+    Hex-Rays consults with the highest priority when typing a call.  Unlike the
+    callee-tinfo route it does not rename or retype the globals referenced by the
+    argument-setup instructions (issue #6).
+    """
+    if not ida_nalt.set_op_tinfo(ea, 0, tinfo):
+        raise IDAError(
+            f"Failed to apply call type at {format_address(ea)}", error_type="ApplyFailed"
+        )
+    ida_hexrays.mark_cfunc_dirty(func_start, False)
+
+
+def clear_call_site_type(ea: int, func_start: int) -> None:
+    """Remove the operand type pinned by :func:`apply_call_site_type`.
+
+    Raises :class:`IDAError` with ``error_type="NotFound"`` when no operand type is
+    set at *ea* (``is_userti`` stays ``False`` after ``set_op_tinfo``, so
+    ``get_op_tinfo`` is the only reliable probe).
+    """
+    if not ida_nalt.get_op_tinfo(ida_typeinf.tinfo_t(), ea, 0):
+        raise IDAError(f"No call type set at {format_address(ea)}", error_type="NotFound")
+    ida_nalt.del_op_tinfo(ea, 0)
+    ida_hexrays.mark_cfunc_dirty(func_start, False)
 
 
 _CC_NAMES = {
@@ -222,4 +264,68 @@ def register(mcp: FastMCP):
             name=get_func_name(func.start_ea),
             old_convention=old_convention,
             convention=convention,
+        )
+
+    @mcp.tool(
+        annotations=ANNO_MUTATE,
+        tags={"functions", "types"},
+    )
+    @session.require_open
+    def set_call_type(
+        address: Address,
+        type_string: str,
+    ) -> SetCallTypeResult:
+        """Force the callee prototype at ONE call site (for indirect calls with no symbol).
+
+        set_function_type retypes a function everywhere; this pins the type used at a
+        single call instruction, which is the only handle you get on `(*v3)(a1, a2)`
+        style dispatch. The containing function's cached decompilation is dropped
+        automatically. Undo with clear_call_type.
+
+        Args:
+            address: Address of the call instruction.
+            type_string: C function declaration, e.g. "int __fastcall f(void *this, int a)".
+        """
+        ea = resolve_address(address)
+        func = resolve_function(ea)
+
+        if not ida_idp.is_call_insn(decode_insn_at(ea)):
+            raise IDAError(
+                f"{format_address(ea)} is not a call instruction", error_type="InvalidArgument"
+            )
+
+        tinfo = parse_type(type_string)
+        apply_call_site_type(ea, tinfo, func.start_ea)
+
+        return SetCallTypeResult(
+            address=format_address(ea),
+            function=format_address(func.start_ea),
+            type=str(tinfo),
+        )
+
+    @mcp.tool(
+        annotations=ANNO_DESTRUCTIVE,
+        tags={"functions", "types"},
+    )
+    @session.require_open
+    def clear_call_type(
+        address: Address,
+    ) -> SetCallTypeResult:
+        """Remove the callee prototype pinned at ONE call site by set_call_type.
+
+        The call goes back to whatever type Hex-Rays derives on its own, and the
+        containing function's cached decompilation is dropped automatically.
+
+        Args:
+            address: Address of the call instruction.
+        """
+        ea = resolve_address(address)
+        func = resolve_function(ea)
+
+        clear_call_site_type(ea, func.start_ea)
+
+        return SetCallTypeResult(
+            address=format_address(ea),
+            function=format_address(func.start_ea),
+            type="",
         )

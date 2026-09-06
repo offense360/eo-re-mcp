@@ -75,6 +75,8 @@ Function prototypes and calling conventions.
 | `get_function_type` | Get function signature, return type, calling convention, and parameters. |
 | `set_function_type` | Set a function's prototype from a C declaration string. |
 | `set_function_calling_convention` | Change calling convention (cdecl, stdcall, fastcall, thiscall, pascal). |
+| `set_call_type` | Sets the call-site operand type (Hex-Rays uses it with highest priority); undo with `clear_call_type` (IDA). |
+| `clear_call_type` | Remove the call-site operand type pinned by `set_call_type` (IDA). |
 
 ## Function Flags
 
@@ -107,6 +109,8 @@ Stack frame and local variable analysis.
 |------|-------------|
 | `get_stack_frame` | Get the stack frame layout: members with offsets, sizes, and names. |
 | `get_function_vars` | Get local variables via decompilation: names, types, widths, arg/result flags. |
+| `set_stack_delta` | Override the SP delta of an instruction — the fix for "positive sp value"; the point is recorded at the instruction end (`applies_at`) (IDA). |
+| `delete_stack_delta` | Remove a `set_stack_delta` override; IDA's own stack points are never deleted (IDA). |
 
 ## Cross-References
 
@@ -254,7 +258,11 @@ Decompiler interaction — variable management, microcode, and comments.
 |------|-------------|
 | `rename_decompiler_variable` | Rename a local variable in pseudocode. |
 | `retype_decompiler_variable` | Change the type of a local variable in pseudocode. |
-| `list_decompiler_variables` | List all variables in a function's pseudocode. |
+| `list_decompiler_variables` | List all variables in a function's pseudocode, with Hex-Rays attributes (BYREF, OVERLAPPED, MAPDST, ...). |
+| `map_decompiler_variable` | Merge one local into another so both locations read as one variable (IDA). |
+| `clear_decompiler_variable_maps` | Drop every variable merge in a function (IDA). |
+| `get_pseudocode_line_map` | Map `decompile_function` line numbers to addresses (IDA). |
+| `refresh_decompilation` | Drop a function's cached decompilation so the next decompile is fresh (IDA). |
 | `get_microcode` | Get microcode at a given maturity level (IDA). |
 | `set_decompiler_comment` | Set a comment in pseudocode at a specific address. |
 | `get_decompiler_comments` | Get all user comments in a function's pseudocode. |
@@ -265,9 +273,9 @@ Decompiler AST (ctree) exploration and pattern matching.
 
 | Tool | Description |
 |------|-------------|
-| `get_ctree` | Get the decompiler AST for a function. `depth` is 1-10 (default 3). |
+| `get_ctree` | Get the decompiler AST for a function. `depth` is 1-10 (default 3). Nodes carry `exflags` (FPOP, UNDEF, VFTABLE, ...) and calls carry `call_flags` (NORET, HELPER, FINAL). |
 | `find_ctree_calls` | Find function calls in the AST, optionally filtered by callee name. |
-| `find_ctree_patterns` | Find patterns in the AST: calls, string_refs, comparisons, assignments, casts, pointer_derefs, or all (IDA). |
+| `find_ctree_patterns` | Find patterns in the AST: calls, string_refs, comparisons, assignments, casts, pointer_derefs, or all (IDA). Comparisons and assignments include their operands; string_refs cover globals holding literals, not just `cot_str`. |
 
 ## Types
 
