@@ -24,6 +24,7 @@ from re_mcp_ida.helpers import (
     Offset,
     async_paginate_iter,
     call_ida,
+    check_new_name,
     compile_filter,
     format_address,
     is_cancelled,
@@ -125,10 +126,13 @@ def register(mcp: FastMCP):
         ea = resolve_address(address)
 
         old_name = ida_name.get_name(ea) or ""
+        if new_name:  # empty string removes the existing name
+            check_new_name(ea, new_name, what="name")
         success = ida_name.set_name(ea, new_name, ida_name.SN_CHECK)
         if not success:
             raise IDAError(
-                f"Failed to rename {format_address(ea)} to {new_name!r}", error_type="RenameFailed"
+                f"Failed to rename {format_address(ea)} to {new_name!r} (IDA rejected the name)",
+                error_type="RenameFailed",
             )
 
         return RenameResult(

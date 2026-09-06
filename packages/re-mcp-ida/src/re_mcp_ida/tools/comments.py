@@ -17,6 +17,7 @@ from re_mcp_ida.helpers import (
     ANNO_READ_ONLY,
     Address,
     IDAError,
+    check_mapped,
     format_address,
     resolve_address,
     resolve_function,
@@ -121,10 +122,12 @@ def register(mcp: FastMCP):
         """
         ea = resolve_address(address)
 
+        check_mapped(ea, purpose="set a comment")
         old_comment = idc.get_cmt(ea, repeatable) or ""
         if not idc.set_cmt(ea, comment, repeatable):
             raise IDAError(
-                f"Failed to set comment at {format_address(ea)}", error_type="SetCommentFailed"
+                f"Failed to set comment at {format_address(ea)} (IDA rejected the comment)",
+                error_type="SetCommentFailed",
             )
         return SetCommentResult(
             address=format_address(ea),
@@ -182,6 +185,7 @@ def register(mcp: FastMCP):
         """
         ea = resolve_address(address)
 
+        check_mapped(ea, purpose="set a comment")
         existing = idc.get_cmt(ea, repeatable) or ""
 
         if comment in existing:
@@ -196,7 +200,8 @@ def register(mcp: FastMCP):
         new_comment = f"{existing}{separator}{comment}" if existing else comment
         if not idc.set_cmt(ea, new_comment, repeatable):
             raise IDAError(
-                f"Failed to set comment at {format_address(ea)}", error_type="SetCommentFailed"
+                f"Failed to set comment at {format_address(ea)} (IDA rejected the comment)",
+                error_type="SetCommentFailed",
             )
         return AppendCommentResult(
             address=format_address(ea),
