@@ -20,6 +20,7 @@ from re_mcp_ghidra.helpers import (
     resolve_address,
 )
 from re_mcp_ghidra.session import session
+from re_mcp_ghidra.tools.xrefs import is_memory_reference
 
 
 class SwitchCase(BaseModel):
@@ -42,7 +43,7 @@ class SwitchSummary(BaseModel):
 
     address: str = Field(description="Switch instruction address (hex).")
     function: str = Field(description="Containing function name.")
-    num_cases: int = Field(description="Number of reference targets.")
+    num_cases: int = Field(description="Number of memory reference targets.")
 
 
 def register(mcp: FastMCP) -> None:
@@ -82,8 +83,11 @@ def register(mcp: FastMCP) -> None:
         refs = ref_mgr.getReferencesFrom(addr)
         targets: dict[int, list[int]] = {}
         for ref in refs:
-            to_addr = ref.getToAddress()
-            offset = to_addr.getOffset()
+            # A stack/register reference has no meaningful memory offset, so it
+            # is not a switch case target (#30).
+            if not is_memory_reference(ref):
+                continue
+            offset = ref.getToAddress().getOffset()
             # Group by target address; case values are not directly available
             # in Ghidra's reference model, so we use sequential indices
             if offset not in targets:
@@ -136,7 +140,9 @@ def register(mcp: FastMCP) -> None:
                     if flow.isComputed() and flow.isJump():
                         addr = insn.getAddress()
                         refs = ref_mgr.getReferencesFrom(addr)
-                        num_targets = sum(1 for _ in refs)
+                        # Same predicate get_switch_info builds its cases with,
+                        # so the two tools report the same num_cases (#30).
+                        num_targets = sum(1 for ref in refs if is_memory_reference(ref))
                         yield SwitchSummary(
                             address=format_address(addr.getOffset()),
                             function=func.getName(),

@@ -150,14 +150,53 @@ def resolve_address_value(addr: str | int) -> int:
     raise GhidraError(f"Cannot resolve address: {addr_str!r}", error_type="InvalidAddress")
 
 
+def _format_offset(offset: int) -> str:
+    """Format an offset for an error message, keeping negatives readable.
+
+    ``format_address`` renders a negative integer as ``0x-1``; a leading sign
+    reads better when the value is being reported back to a client.
+    """
+    if offset < 0:
+        return f"-{format_address(-offset)}"
+    return format_address(offset)
+
+
 def to_ghidra_address(offset: int):
-    """Convert an integer offset to a Ghidra Address object."""
+    """Convert an integer offset to a Ghidra Address object.
+
+    ``parse_address`` accepts Python integers of any size, so an out-of-range
+    value used to reach JPype and escape as a bare
+    ``OverflowError: int too big to convert`` — no ``error_type``, no offending
+    address, and no JSON error body for the client (#28).  Both the range check
+    and the conversion now report ``error_type="InvalidAddress"``.
+    """
     from re_mcp_ghidra.session import session  # noqa: PLC0415
 
     program = session.program
     if program is None:
         raise GhidraError("No database is open", error_type="NoDatabase")
-    return program.getAddressFactory().getDefaultAddressSpace().getAddress(offset)
+
+    space = program.getAddressFactory().getDefaultAddressSpace()
+    max_off = space.getMaxAddress().getOffset()
+    if max_off < 0:
+        # JPype hands back a Java signed long, so a 64-bit space reports -1.
+        max_off &= 0xFFFFFFFFFFFFFFFF
+    if offset < 0 or offset > max_off:
+        raise GhidraError(
+            f"Address {_format_offset(offset)} is outside the program's address space "
+            f"(0x0-{format_address(max_off)})",
+            error_type="InvalidAddress",
+        )
+
+    try:
+        return space.getAddress(offset)
+    except GhidraError:
+        raise
+    except Exception as exc:
+        raise GhidraError(
+            f"Invalid address {_format_offset(offset)}: {exc}",
+            error_type="InvalidAddress",
+        ) from exc
 
 
 def resolve_address(addr: str | int):
