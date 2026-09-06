@@ -57,6 +57,7 @@ __all__ = [
     "format_address",
     "format_permissions",
     "is_external_address",
+    "normalize_pseudocode",
     "paginate",
     "paginate_iter",
     "parse_address",
@@ -374,3 +375,23 @@ def write_memory(program, addr, data: bytes, *, label: str = "Write bytes") -> N
         raise
     except Exception as e:
         raise GhidraError(f"Failed to write bytes: {e}", error_type="PatchFailed") from e
+
+
+# ---------------------------------------------------------------------------
+# Decompiler output shape
+# ---------------------------------------------------------------------------
+
+
+def normalize_pseudocode(code: str) -> str:
+    """LF-only pseudocode with no leading or trailing blank lines (#42).
+
+    Ghidra's PrettyPrinter joins lines with the platform separator (CR LF on
+    Windows) and pads the text with one empty line at each end; IDA's tools
+    build ``"\\n".join(lines)``.  Both backends now return the same shape, and
+    ``splitlines()`` on the result yields exactly the code lines.
+
+    Deliberately not ``splitlines()``-based: that would also split on form
+    feed, ``\\x1c``-``\\x1e``, ``\\x85`` and U+2028/2029, which may legitimately
+    appear inside string literals in the decompiled code.
+    """
+    return code.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
