@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -22,7 +24,7 @@ from re_mcp_ghidra.helpers import (
     transaction,
 )
 from re_mcp_ghidra.session import session
-from re_mcp_ghidra.tools.database import count_functions
+from re_mcp_ghidra.tools.database import count_functions, loaded_memory_bounds
 
 
 class ReanalyzeRangeResult(BaseModel):
@@ -45,8 +47,18 @@ class AnalysisCompleteResult(BaseModel):
     )
     segment_count: int = Field(description="Number of memory blocks.")
     entry_point_count: int = Field(description="Number of entry points.")
-    min_address: str = Field(description="Minimum address (hex).")
-    max_address: str = Field(description="Maximum address (hex).")
+    min_address: str = Field(
+        description=(
+            "Lowest address of loaded, non-artificial memory in one address space "
+            "(hex); same definition as get_database_info.min_address."
+        )
+    )
+    max_address: str = Field(
+        description=(
+            "Highest address of loaded, non-artificial memory in one address space "
+            "(hex); same definition as get_database_info.max_address."
+        )
+    )
 
 
 class AnalysisProblem(BaseModel):
@@ -56,6 +68,25 @@ class AnalysisProblem(BaseModel):
     type: str = Field(description="Bookmark type (ERROR or WARNING).")
     category: str = Field(description="Bookmark category.")
     comment: str = Field(description="Bookmark comment.")
+
+
+def analysis_bounds(program: Any) -> tuple[str, str]:
+    """Formatted ``(min_address, max_address)`` for :class:`AnalysisCompleteResult`.
+
+    Delegates to :func:`loaded_memory_bounds` so ``analyze_database`` (and the
+    first ``wait_for_analysis``, which proxies it) reports exactly what
+    ``get_database_info`` reports.  ``Program.getMinAddress``/``getMaxAddress``
+    span every address space, so they returned the PE ``tdb`` end
+    (``0xFF0000184F``) and the ELF section-header overlay end (``0x77F``)
+    instead of the image extent (#44, #27).
+    """
+    lo, hi = loaded_memory_bounds(
+        program.getMemory(), program.getAddressFactory().getDefaultAddressSpace()
+    )
+    return (
+        format_address(lo.getOffset()) if lo else "0x0",
+        format_address(hi.getOffset()) if hi else "0x0",
+    )
 
 
 def register(mcp: FastMCP) -> None:
@@ -136,16 +167,15 @@ def register(mcp: FastMCP) -> None:
             if sym.getSymbolType() == SymbolType.FUNCTION and sym.isExternalEntryPoint():
                 entry_count += 1
 
-        min_addr = program.getMinAddress()
-        max_addr = program.getMaxAddress()
+        min_address, max_address = analysis_bounds(program)
 
         return AnalysisCompleteResult(
             status="analysis_complete",
             function_count=func_count,
             segment_count=block_count,
             entry_point_count=entry_count,
-            min_address=format_address(min_addr.getOffset()) if min_addr else "0x0",
-            max_address=format_address(max_addr.getOffset()) if max_addr else "0x0",
+            min_address=min_address,
+            max_address=max_address,
         )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"analysis"})
