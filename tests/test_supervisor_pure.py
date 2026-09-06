@@ -3384,16 +3384,17 @@ class TestBatchMetaTool:
             database="db",
             ctx=ctx,
         )
-        assert result.succeeded == 2
-        assert result.failed == 0
-        assert not result.cancelled
-        assert len(result.results) == 2
-        assert result.results[0].result == {"a": 1}
-        assert result.results[1].result == {"b": 2}
+        sc = result.structured_content
+        assert sc["succeeded"] == 2
+        assert sc["failed"] == 0
+        assert not sc["cancelled"]
+        assert len(sc["results"]) == 2
+        assert sc["results"][0]["result"] == {"a": 1}
+        assert sc["results"][1]["result"] == {"b": 2}
 
     @pytest.mark.asyncio
     async def test_error_collection(self):
-        """Partial failures raise BatchFailed with per-item results in payload."""
+        """Partial failures are collected per item; the response is flagged isError."""
         ctx = self._make_ctx(
             results=[
                 IDAError("bad address"),
@@ -3402,25 +3403,25 @@ class TestBatchMetaTool:
         )
         transform = ToolTransform(pinned=PINNED_TOOLS)
         fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed") as exc_info:
-            await fn(
-                operations=[
-                    self._op("get_comment", address="bad"),
-                    self._op("get_comment", address="0x1"),
-                ],
-                database="db",
-                stop_on_error=False,
-                ctx=ctx,
-            )
-        # The error payload contains the full BatchResult as JSON inside the "error" key.
-        envelope = json.loads(str(exc_info.value))
-        payload = json.loads(envelope["error"])
+        result = await fn(
+            operations=[
+                self._op("get_comment", address="bad"),
+                self._op("get_comment", address="0x1"),
+            ],
+            database="db",
+            stop_on_error=False,
+            ctx=ctx,
+        )
+        assert result.is_error is True
+        payload = result.structured_content
         assert payload["succeeded"] == 1
         assert payload["failed"] == 1
+        assert payload["results"][0]["error"]["error"] == "bad address"
+        assert payload["results"][1]["result"] == {"ok": True}
 
     @pytest.mark.asyncio
     async def test_stop_on_error(self):
-        """stop_on_error=True stops after first failure and raises BatchFailed."""
+        """stop_on_error=True stops after the first failure; the response is flagged isError."""
         ctx = self._make_ctx(
             results=[
                 IDAError("fail"),
@@ -3429,16 +3430,138 @@ class TestBatchMetaTool:
         )
         transform = ToolTransform(pinned=PINNED_TOOLS)
         fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed"):
-            await fn(
-                operations=[
-                    self._op("get_comment", address="bad"),
-                    self._op("get_comment", address="0x1"),
-                ],
-                database="db",
-                stop_on_error=True,
-                ctx=ctx,
-            )
+        result = await fn(
+            operations=[
+                self._op("get_comment", address="bad"),
+                self._op("get_comment", address="0x1"),
+            ],
+            database="db",
+            stop_on_error=True,
+            ctx=ctx,
+        )
+        assert result.is_error is True
+        assert result.structured_content["cancelled"] is True
+        assert len(result.structured_content["results"]) == 1
+        # The second operation never ran.
+        ctx.fastmcp.call_tool.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_returns_structured_result_with_is_error(self):
+        """A failing item yields a ToolResult with isError set and the BatchResult intact.
+
+        No exception, no stringified payload: the successful item's result and
+        the failing item's error object are both readable from structured_content.
+        """
+        ctx = self._make_ctx(
+            results=[
+                IDAError("bad address", error_type="NotFound"),
+                {"ok": True},
+            ]
+        )
+        transform = ToolTransform(pinned=PINNED_TOOLS)
+        fn = transform._get_batch_tool().fn
+        result = await fn(
+            operations=[
+                self._op("get_comment", address="bad"),
+                self._op("get_comment", address="0x1"),
+            ],
+            database="db",
+            stop_on_error=False,
+            ctx=ctx,
+        )
+        assert isinstance(result, ToolResult)
+        assert result.is_error is True
+        sc = result.structured_content
+        assert sc["succeeded"] == 1
+        assert sc["failed"] == 1
+        assert sc["cancelled"] is False
+        assert isinstance(sc["results"][0]["error"], dict)
+        assert sc["results"][0]["error"]["error_type"] == "NotFound"
+        assert sc["results"][0]["error"]["error"] == "bad address"
+        assert sc["results"][1]["result"] == {"ok": True}
+        text = "".join(c.text for c in result.content)
+        assert "1 failed" in text
+        assert "get_comment" in text
+
+    @pytest.mark.asyncio
+    async def test_stop_on_error_marks_cancelled(self):
+        """stop_on_error=True stops after the first failure and marks cancelled."""
+        ctx = self._make_ctx(
+            results=[
+                IDAError("fail"),
+                {"ok": True},
+            ]
+        )
+        transform = ToolTransform(pinned=PINNED_TOOLS)
+        fn = transform._get_batch_tool().fn
+        result = await fn(
+            operations=[
+                self._op("get_comment", address="bad"),
+                self._op("get_comment", address="0x1"),
+            ],
+            database="db",
+            stop_on_error=True,
+            ctx=ctx,
+        )
+        assert isinstance(result, ToolResult)
+        assert result.is_error is True
+        sc = result.structured_content
+        assert sc["cancelled"] is True
+        assert sc["failed"] == 1
+        assert sc["succeeded"] == 0
+        assert len(sc["results"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_all_success_is_not_error(self):
+        """A batch with no failures is a plain (non-error) ToolResult with a summary line."""
+        ctx = self._make_ctx(results=[{"a": 1}, {"b": 2}])
+        transform = ToolTransform(pinned=PINNED_TOOLS)
+        fn = transform._get_batch_tool().fn
+        result = await fn(
+            operations=[self._op("tool_a"), self._op("tool_b")],
+            database="db",
+            ctx=ctx,
+        )
+        assert isinstance(result, ToolResult)
+        assert result.is_error is False
+        assert result.structured_content["succeeded"] == 2
+        text = "".join(c.text for c in result.content)
+        assert "2 succeeded, 0 failed" in text
+
+    @pytest.mark.asyncio
+    async def test_item_error_keeps_plain_text(self):
+        """An exception whose message is not JSON is recorded as the plain string."""
+        ctx = self._make_ctx(results=[RuntimeError("boom, not json")])
+        transform = ToolTransform(pinned=PINNED_TOOLS)
+        fn = transform._get_batch_tool().fn
+        result = await fn(
+            operations=[self._op("tool_a")],
+            database="db",
+            stop_on_error=False,
+            ctx=ctx,
+        )
+        assert result.is_error is True
+        assert result.structured_content["results"][0]["error"] == "boom, not json"
+
+    @pytest.mark.asyncio
+    async def test_blocked_tool_is_reported_per_item(self):
+        """A blocked lifecycle tool is a per-item InvalidOperation error, not an exception."""
+        ctx = self._make_ctx(results=[{"ok": True}])
+        transform = ToolTransform(pinned=PINNED_TOOLS)
+        fn = transform._get_batch_tool().fn
+        result = await fn(
+            operations=[self._op("close_database"), self._op("get_comment", address="0x1")],
+            database="db",
+            stop_on_error=False,
+            ctx=ctx,
+        )
+        assert result.is_error is True
+        sc = result.structured_content
+        assert sc["results"][0]["error"]["error_type"] == "InvalidOperation"
+        assert "close_database" in sc["results"][0]["error"]["error"]
+        assert sc["results"][1]["result"] == {"ok": True}
+        assert sc["succeeded"] == 1
+        ctx.fastmcp.call_tool.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_database_auto_injection(self):
@@ -3479,22 +3602,22 @@ class TestBatchMetaTool:
         ctx = self._make_ctx()
         transform = ToolTransform(pinned=PINNED_TOOLS)
         fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed"):
-            await fn(
-                operations=[self._op(tool_name)],
-                database="db",
-                ctx=ctx,
-            )
+        result = await fn(
+            operations=[self._op(tool_name)],
+            database="db",
+            ctx=ctx,
+        )
+        assert result.is_error is True
+        item = result.structured_content["results"][0]
+        assert item["error"]["error_type"] == "InvalidOperation"
+        assert tool_name in item["error"]["error"]
+        ctx.fastmcp.call_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool_name", ["save_database", "list_databases"])
     async def test_allows_save_and_list_databases(self, tool_name: str):
         """save_database and list_databases are useful inside batch."""
-        ctx = self._make_ctx()
-        ctx.fastmcp.call_tool.return_value = MagicMock(
-            content=[MagicMock(type="text", text='{"ok": true}')],
-            isError=False,
-        )
+        ctx = self._make_ctx(results=[{"ok": True}])
         transform = ToolTransform(pinned=PINNED_TOOLS)
         fn = transform._get_batch_tool().fn
         result = await fn(
@@ -3502,8 +3625,9 @@ class TestBatchMetaTool:
             database="db",
             ctx=ctx,
         )
-        assert result.failed == 0
-        assert result.succeeded == 1
+        assert result.is_error is False
+        assert result.structured_content["failed"] == 0
+        assert result.structured_content["succeeded"] == 1
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool_name", sorted(META_TOOLS))
@@ -3512,12 +3636,16 @@ class TestBatchMetaTool:
         ctx = self._make_ctx()
         transform = ToolTransform(pinned=PINNED_TOOLS)
         fn = transform._get_batch_tool().fn
-        with pytest.raises(BackendError, match="BatchFailed"):
-            await fn(
-                operations=[self._op(tool_name)],
-                database="db",
-                ctx=ctx,
-            )
+        result = await fn(
+            operations=[self._op(tool_name)],
+            database="db",
+            ctx=ctx,
+        )
+        assert result.is_error is True
+        item = result.structured_content["results"][0]
+        assert item["error"]["error_type"] == "InvalidOperation"
+        assert tool_name in item["error"]["error"]
+        ctx.fastmcp.call_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_progress_reporting(self):
@@ -3547,10 +3675,12 @@ class TestBatchMetaTool:
         transform = ToolTransform(pinned=PINNED_TOOLS)
         fn = transform._get_batch_tool().fn
         result = await fn(operations=[], database="db", ctx=ctx)
-        assert result.succeeded == 0
-        assert result.failed == 0
-        assert len(result.results) == 0
-        assert not result.cancelled
+        assert result.is_error is False
+        sc = result.structured_content
+        assert sc["succeeded"] == 0
+        assert sc["failed"] == 0
+        assert len(sc["results"]) == 0
+        assert not sc["cancelled"]
 
     @pytest.mark.asyncio
     async def test_without_ctx_raises_backend_error(self):
@@ -3585,11 +3715,12 @@ class TestBatchMetaTool:
             database="db",
             ctx=ctx,
         )
-        assert result.cancelled is True
-        assert result.succeeded == 1
+        sc = result.structured_content
+        assert sc["cancelled"] is True
+        assert sc["succeeded"] == 1
         # Third operation never ran.
-        assert len(result.results) == 1
-        assert result.results[0].tool == "tool_a"
+        assert len(sc["results"]) == 1
+        assert sc["results"][0]["tool"] == "tool_a"
 
     @pytest.mark.asyncio
     async def test_result_indices_match_input_order(self):
@@ -3602,10 +3733,11 @@ class TestBatchMetaTool:
             database="db",
             ctx=ctx,
         )
-        assert result.results[0].index == 0
-        assert result.results[0].tool == "tool_a"
-        assert result.results[1].index == 1
-        assert result.results[1].tool == "tool_b"
+        items = result.structured_content["results"]
+        assert items[0]["index"] == 0
+        assert items[0]["tool"] == "tool_a"
+        assert items[1]["index"] == 1
+        assert items[1]["tool"] == "tool_b"
 
 
 # ---------------------------------------------------------------------------

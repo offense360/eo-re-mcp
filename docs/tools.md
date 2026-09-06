@@ -12,7 +12,7 @@ To keep token usage manageable, only common analysis tools and management tools 
 | `get_schema` | Get parameter schemas and return shapes for specific tools by name. Pass `detail="full"` for complete JSON schemas. Works for both pinned and hidden tools. |
 | `call` | Lightweight proxy for calling any tool by name, including hidden tools not in the client tool list. |
 | `execute` | Execute sandboxed Python code that chains multiple `await invoke(name, params)` invocations in a single round trip. Supports `asyncio.gather` for parallel queries, loops, and result processing between calls. |
-| `batch` | Execute multiple tool calls sequentially in a single request (max 50). Collects per-item results and errors. Use for applying the same operation to many targets or mixing different operations without per-call round-trip overhead. |
+| `batch` | Execute multiple tool calls sequentially in a single request (max 50). Collects per-item results and errors. Use for applying the same operation to many targets or mixing different operations without per-call round-trip overhead. A failing operation no longer turns the whole call into an error string: the response is always the structured `BatchResult` (`succeeded`, `failed`, `cancelled`, per-item `result`/`error` objects) with `isError` set when any operation failed. |
 
 Tools not in the pinned set are hidden from the listing but callable via `call`, `batch`, or `execute`.
 
