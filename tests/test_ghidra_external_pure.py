@@ -79,6 +79,7 @@ class FakeFunction:
     ) -> None:
         self._name, self._entry = name, entry
         self._external, self._thunked, self._thunk_addrs = external, thunked, thunk_addrs
+        self.thunk_calls: list[bool] = []
 
     def getName(self) -> str:
         return self._name
@@ -102,7 +103,12 @@ class FakeFunction:
         return f
 
     def getFunctionThunkAddresses(self, recursive: bool):
-        """``null`` (Java) when no thunk points at this function."""
+        """``null`` (Java) when no thunk points at this function.
+
+        The fixture lists the thunks in hop order (innermost first, as Ghidra
+        returns them) and records *recursive* so a test can check which form
+        was asked for."""
+        self.thunk_calls.append(recursive)
         return self._thunk_addrs
 
 
@@ -120,15 +126,41 @@ class FakeExtLoc:
         return self._function
 
 
+class FakeBlock:
+    def __init__(self, *, artificial: bool) -> None:
+        self._artificial = artificial
+
+    def isArtificial(self) -> bool:
+        return self._artificial
+
+
 class FakeProgram:
-    def __init__(self, entries: dict[FakeAddr, tuple[FakeSymbol, FakeExtLoc | None]]) -> None:
+    def __init__(
+        self,
+        entries: dict[FakeAddr, tuple[FakeSymbol, FakeExtLoc | None]],
+        *,
+        artificial: set[FakeAddr] | None = None,
+        unmapped: set[FakeAddr] | None = None,
+    ) -> None:
         self._entries = entries
+        self._artificial = artificial or set()
+        self._unmapped = unmapped or set()
 
     def getSymbolTable(self):
         return self
 
     def getExternalManager(self):
         return self
+
+    def getMemory(self):
+        return self
+
+    def getBlock(self, addr: FakeAddr) -> FakeBlock | None:
+        """``Memory.getBlock(Address)``: the analyzer-made ELF ``EXTERNAL``
+        block answers ``isArtificial() == True``; ``.plt.sec``/``.text`` do not."""
+        if addr in self._unmapped:
+            return None
+        return FakeBlock(artificial=addr in self._artificial)
 
     def getPrimarySymbol(self, addr: FakeAddr) -> FakeSymbol | None:
         entry = self._entries.get(addr)
@@ -444,3 +476,66 @@ class TestDocs:
         row = self._row("get_imports")
         assert "thunk" in row.lower()
         assert "external_address" in row
+
+
+# ---------------------------------------------------------------------------
+# thunk_address must be the thunk in real memory, not the analyzer-made
+# EXTERNAL block stub (#43 follow-up, review of 944f0bc)
+# ---------------------------------------------------------------------------
+
+
+# Measured on curl-elf / curl.exe with Ghidra 12.1.2 (probe3.log): ELF free
+# has two thunks, innermost first — 0x149268 in the artificial EXTERNAL block
+# (2 references) and 0x10bd50 in .plt.sec (334 callers).
+ELF_FREE_EXT = FakeAddr(0x2, external=True)
+ELF_FREE_STUB = FakeAddr(0x149268)
+ELF_FREE_PLT = FakeAddr(0x10BD50)
+ELF_FREE_SYM = FakeSymbol("free", "<EXTERNAL>::free")
+
+
+def _elf_free_program(
+    thunks: list[FakeAddr] | None,
+    *,
+    artificial: set[FakeAddr] | None = None,
+    unmapped: set[FakeAddr] | None = None,
+) -> tuple[FakeProgram, FakeFunction]:
+    func = FakeFunction("free", ELF_FREE_EXT, external=True, thunk_addrs=thunks)
+    program = FakeProgram(
+        {ELF_FREE_EXT: (ELF_FREE_SYM, FakeExtLoc("<EXTERNAL>", func))},
+        artificial=artificial,
+        unmapped=unmapped,
+    )
+    return program, func
+
+
+class TestThunkAddressIsInRealMemory:
+    def test_elf_skips_the_artificial_external_block_stub(self):
+        program, _ = _elf_free_program([ELF_FREE_STUB, ELF_FREE_PLT], artificial={ELF_FREE_STUB})
+        assert describe_external(program, ELF_FREE_EXT)["thunk_address"] == "0x10BD50"
+
+    def test_pe_single_real_thunk_is_unchanged(self):
+        assert describe_external(PROGRAM, FREE_EXT)["thunk_address"] == "0x140004210"
+
+    def test_all_thunks_artificial_falls_back_to_the_first_hop(self):
+        program, _ = _elf_free_program(
+            [ELF_FREE_STUB, ELF_FREE_PLT], artificial={ELF_FREE_STUB, ELF_FREE_PLT}
+        )
+        assert describe_external(program, ELF_FREE_EXT)["thunk_address"] == "0x149268"
+
+    def test_no_thunks_is_still_null(self):
+        program, _ = _elf_free_program([])
+        assert describe_external(program, ELF_FREE_EXT)["thunk_address"] is None
+        program, _ = _elf_free_program(None)
+        assert describe_external(program, ELF_FREE_EXT)["thunk_address"] is None
+
+    def test_asks_for_the_recursive_thunk_list(self):
+        """Only ``getFunctionThunkAddresses(True)`` returns the outer PLT hop."""
+        program, func = _elf_free_program([ELF_FREE_STUB, ELF_FREE_PLT])
+        describe_external(program, ELF_FREE_EXT)
+        assert func.thunk_calls == [True]
+
+    def test_a_thunk_outside_any_block_is_not_chosen(self):
+        program, _ = _elf_free_program(
+            [ELF_FREE_STUB, ELF_FREE_PLT], artificial={ELF_FREE_STUB}, unmapped={ELF_FREE_PLT}
+        )
+        assert describe_external(program, ELF_FREE_EXT)["thunk_address"] == "0x149268"

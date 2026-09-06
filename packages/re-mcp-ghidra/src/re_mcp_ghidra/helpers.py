@@ -89,9 +89,13 @@ def describe_external(program: Any, addr: Any) -> dict[str, Any]:
 
     Returns ``address`` = ``"EXTERNAL:<library>::<name>"`` (Ghidra's own
     qualified name, ``Symbol.getName(True)``; ``"EXTERNAL:0x<offset>"`` when no
-    symbol is there), ``symbol``, ``library`` and ``thunk_address`` — the memory
-    address of the import's first-hop thunk (PE stub or ELF PLT entry) or
-    ``None`` when the import is only reached through its IAT pointer.
+    symbol is there), ``symbol``, ``library`` and ``thunk_address`` — the
+    address of the thunk that lives in real (non-artificial) memory: the PE
+    stub or the ELF ``.plt``/``.plt.sec`` entry, which is what callers
+    reference.  Ghidra's analyzer-made ELF ``EXTERNAL`` block holds a
+    body-less first-hop stub for every import (``free`` at ``0x149268``, two
+    references) and is skipped; when no hop is in real memory the first hop is
+    kept.  ``None`` when the import is only reached through its IAT pointer.
 
     The offset of an EXTERNAL address is a slot index (``free`` is
     ``EXTERNAL:0xb0``), so it must never be formatted as a memory address.
@@ -102,12 +106,21 @@ def describe_external(program: Any, addr: Any) -> dict[str, Any]:
     loc = program.getExternalManager().getExternalLocation(sym) if sym else None
     func = loc.getFunction() if loc and loc.isFunction() else None
     # Java null (no thunk) or an empty array: ``if thunks`` handles both.
-    thunks = func.getFunctionThunkAddresses(False) if func else None
+    # Recursive: innermost hop first, so the ELF EXTERNAL-block stub precedes
+    # the .plt.sec entry; prefer the first hop whose block is not artificial.
+    thunks = func.getFunctionThunkAddresses(True) if func else None
+    thunk = None
+    if thunks:
+        memory = program.getMemory()
+        thunk = next(
+            (t for t in thunks if (b := memory.getBlock(t)) is not None and not b.isArtificial()),
+            thunks[0],
+        )
     return {
         "address": f"EXTERNAL:{sym.getName(True)}" if sym else f"EXTERNAL:{addr.getOffset():#x}",
         "symbol": sym.getName() if sym else "",
         "library": loc.getLibraryName() if loc else "",
-        "thunk_address": format_address(thunks[0].getOffset()) if thunks else None,
+        "thunk_address": format_address(thunk.getOffset()) if thunk is not None else None,
     }
 
 
