@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import ida_bytes
-import ida_undo
 import idautils
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -97,7 +96,7 @@ def register(mcp: FastMCP):
     ) -> PatchAsmResult:
         """Assemble and patch an instruction into the database in one step.
 
-        Combines assemble_instruction + patch_bytes; creates an undo point.
+        Combines assemble_instruction + patch_bytes.
 
         Args:
             address: Address where the instruction should be assembled and patched.
@@ -108,7 +107,6 @@ def register(mcp: FastMCP):
 
         old_bytes_data = ida_bytes.get_bytes(ea, len(assembled_bytes))
 
-        ida_undo.create_undo_point("patch_asm", "patch_asm")
         ida_bytes.patch_bytes(ea, assembled_bytes)
 
         return PatchAsmResult(

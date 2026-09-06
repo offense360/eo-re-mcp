@@ -359,7 +359,7 @@ Binary modification — byte patching, function/code creation, undefine.
 
 | Tool | Description |
 |------|-------------|
-| `patch_bytes` | Patch bytes at an address (creates an undo point). Returns old and new bytes. |
+| `patch_bytes` | Patch bytes at an address. Returns old and new bytes. |
 | `create_function` | Create a function at an address with auto-detected boundaries. |
 | `make_code` | Mark bytes as a code instruction (without creating a function). |
 | `undefine` | Undefine items at an address, converting them back to raw bytes. |
@@ -371,7 +371,7 @@ Instruction assembly and patching.
 | Tool | Description |
 |------|-------------|
 | `assemble_instruction` | Assemble a mnemonic string into bytes at an address (does not modify the database). |
-| `patch_asm` | Assemble an instruction and patch it into the database in one step (creates an undo point). |
+| `patch_asm` | Assemble an instruction and patch it into the database in one step. |
 
 ## Signatures
 
@@ -507,6 +507,8 @@ Directory tree (folder organization).
 ## Undo
 
 Undo and redo operations. Both backends report `capabilities.undo == true`. On Ghidra each mutating tool call is one undo step; `open_database` and analysis passes (`run_auto_analysis=True`, `analyze_database`, `reanalyze_range`) clear the undo history, and `save_database` also clears it (Ghidra drops the history when a program is saved), so `undo` right after any of those reports `Nothing to undo`.
+
+On IDA every mutating tool call creates an undo point before it runs, so `undo` reverts exactly one tool call (lifecycle and analysis tools excepted: `open_database`, `save_database`, `close_database`, `analyze_database`, `reanalyze_range`). The response's `label` names the call that was reverted (or, for `redo`, re-applied). A mutating call that fails still leaves its undo point behind, so an `undo` right after it succeeds and changes nothing. Unlike Ghidra, IDA keeps the undo history across `save_database`; it is gone once the database is closed and reopened.
 
 | Tool | Description |
 |------|-------------|

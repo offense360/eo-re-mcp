@@ -18,6 +18,10 @@ class UndoRedoResult(BaseModel):
     """Result of an undo/redo operation."""
 
     action: str = Field(description="Action performed.")
+    label: str | None = Field(
+        default=None,
+        description="Tool call that was undone/redone, when IDA reports one.",
+    )
 
 
 def register(mcp: FastMCP):
@@ -27,10 +31,11 @@ def register(mcp: FastMCP):
     )
     @session.require_open
     def undo() -> UndoRedoResult:
-        """Undo the last database modification."""
+        """Undo the last database modification (one mutating tool call)."""
+        label = ida_undo.get_undo_action_label()
         if not ida_undo.perform_undo():
             raise IDAError("Nothing to undo", error_type="UndoFailed")
-        return UndoRedoResult(action="undo")
+        return UndoRedoResult(action="undo", label=label or None)
 
     @mcp.tool(
         annotations=ANNO_DESTRUCTIVE,
@@ -39,6 +44,7 @@ def register(mcp: FastMCP):
     @session.require_open
     def redo() -> UndoRedoResult:
         """Redo the last undone database modification."""
+        label = ida_undo.get_redo_action_label()
         if not ida_undo.perform_redo():
             raise IDAError("Nothing to redo", error_type="RedoFailed")
-        return UndoRedoResult(action="redo")
+        return UndoRedoResult(action="redo", label=label or None)
