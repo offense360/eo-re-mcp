@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
+from collections.abc import Callable
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -17,9 +20,14 @@ from re_mcp_ghidra.helpers import (
     FilterPattern,
     Limit,
     Offset,
+    PseudocodeLine,
+    PseudocodeLines,
     compile_filter,
+    disassembly_note,
     format_address,
     normalize_pseudocode,
+    page_lines,
+    paginate,
     paginate_iter,
     resolve_function,
     transaction,
@@ -46,9 +54,19 @@ class DecompilationResult(BaseModel):
     address: str
     decompiled_code: str = Field(
         description=(
-            "Decompiled C pseudocode; LF line endings, no leading/trailing blank lines "
-            "(same shape as IDA's pseudocode)."
+            "This page of the decompiled C pseudocode (lines start_line .. start_line+n-1); "
+            "LF line endings, no leading/trailing blank lines (same shape as IDA's pseudocode)."
         )
+    )
+    line_count: int = Field(description="Total pseudocode lines in the whole function.")
+    start_line: int = Field(description="0-based line this page starts at.")
+    max_lines: int = Field(description="Requested page size.")
+    has_more: bool = Field(description="True when lines after this page remain.")
+    next_line: int | None = Field(
+        default=None, description="start_line for the next page, or null on the last page."
+    )
+    note: str | None = Field(
+        default=None, description="How to fetch the rest; only set when has_more is true."
     )
 
 
@@ -63,8 +81,47 @@ class DisassemblyResult(BaseModel):
     function_name: str
     start: str
     end: str
-    instruction_count: int
-    instructions: list[Instruction]
+    instruction_count: int = Field(
+        description="Total instructions in the function, not just this page."
+    )
+    instructions: list[Instruction] = Field(description="This page of instructions.")
+    offset: int = Field(description="Index of the first instruction on this page.")
+    limit: int = Field(description="Requested page size.")
+    has_more: bool = Field(description="True when instructions after this page remain.")
+    note: str | None = Field(
+        default=None, description="How to fetch the rest; only set when has_more is true."
+    )
+
+
+# Decompiled, normalized pseudocode per function (#41).  Keyed by
+# (unique program id, entry offset); the value carries the program's
+# modification number, which Ghidra bumps on every change, undo and redo
+# (DomainObject.getModificationNumber), so a stale entry is simply replaced.
+# Bounded so memory stays small; entries of closed programs age out.
+_DECOMPILE_CACHE: OrderedDict[tuple[int, int], tuple[int, str]] = OrderedDict()
+_DECOMPILE_CACHE_SIZE = 8
+
+
+def cached_decompile(program, func, decompile: Callable[[], str]) -> str:
+    """Return the normalized pseudocode of ``func``, decompiling only when needed.
+
+    ``decompile`` runs when there is no entry for the function or the
+    program's modification number changed since the entry was stored.
+    Both ids come back from pyghidra as ``JLong``; ``int()`` keeps the
+    keys hashable and comparable across calls.
+    """
+    key = (int(program.getUniqueProgramID()), int(func.getEntryPoint().getOffset()))
+    mod = int(program.getModificationNumber())
+    entry = _DECOMPILE_CACHE.get(key)
+    if entry is not None and entry[0] == mod:
+        _DECOMPILE_CACHE.move_to_end(key)
+        return entry[1]
+    code = decompile()
+    _DECOMPILE_CACHE[key] = (mod, code)
+    _DECOMPILE_CACHE.move_to_end(key)
+    while len(_DECOMPILE_CACHE) > _DECOMPILE_CACHE_SIZE:
+        _DECOMPILE_CACHE.popitem(last=False)
+    return code
 
 
 class DeleteFunctionResult(BaseModel):
@@ -133,41 +190,68 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions", "decompiler"})
     @session.require_open
-    def decompile_function(address: Address) -> DecompilationResult:
-        """Decompile a function to C pseudocode using Ghidra's decompiler."""
+    def decompile_function(
+        address: Address,
+        start_line: PseudocodeLine = 0,
+        max_lines: PseudocodeLines = 2000,
+    ) -> DecompilationResult:
+        """Decompile a function to C pseudocode using Ghidra's decompiler.
+
+        Returns up to `max_lines` lines (default 2000) from `start_line`;
+        `line_count` is the whole function. Pass a larger `max_lines` to get
+        everything at once. Line numbers are 0-based over the whole function.
+        The decompiled text is cached per function until the database changes.
+        """
         from ghidra.app.decompiler import DecompInterface  # noqa: PLC0415
         from ghidra.util.task import TaskMonitor  # noqa: PLC0415
 
         func = resolve_function(address)
         program = session.program
 
-        decomp = DecompInterface()
-        decomp.openProgram(program)
+        def _decompile() -> str:
+            decomp = DecompInterface()
+            decomp.openProgram(program)
+            try:
+                results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)
+                if not results.decompileCompleted():
+                    error_msg = results.getErrorMessage() or "Decompilation failed"
+                    raise GhidraError(error_msg, error_type="DecompilationFailed")
 
-        try:
-            results = decomp.decompileFunction(func, 60, TaskMonitor.DUMMY)
-            if not results.decompileCompleted():
-                error_msg = results.getErrorMessage() or "Decompilation failed"
-                raise GhidraError(error_msg, error_type="DecompilationFailed")
+                decomp_func = results.getDecompiledFunction()
+                if decomp_func is None:
+                    raise GhidraError(
+                        "Decompilation returned no result", error_type="DecompilationFailed"
+                    )
+                return normalize_pseudocode(decomp_func.getC())
+            finally:
+                decomp.dispose()
 
-            decomp_func = results.getDecompiledFunction()
-            if decomp_func is None:
-                raise GhidraError(
-                    "Decompilation returned no result", error_type="DecompilationFailed"
-                )
+        code = cached_decompile(program, func, _decompile)
+        page = page_lines(code.split("\n") if code else [], start_line, max_lines)
 
-            return DecompilationResult(
-                function_name=func.getName(),
-                address=format_address(func.getEntryPoint().getOffset()),
-                decompiled_code=normalize_pseudocode(decomp_func.getC()),
-            )
-        finally:
-            decomp.dispose()
+        return DecompilationResult(
+            function_name=func.getName(),
+            address=format_address(func.getEntryPoint().getOffset()),
+            decompiled_code=page["text"],
+            line_count=page["line_count"],
+            start_line=page["start_line"],
+            max_lines=page["max_lines"],
+            has_more=page["has_more"],
+            next_line=page["next_line"],
+            note=page["note"],
+        )
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"functions"})
     @session.require_open
-    def disassemble_function(address: Address) -> DisassemblyResult:
-        """Disassemble a function into individual instructions."""
+    def disassemble_function(
+        address: Address, offset: Offset = 0, limit: Limit = 500
+    ) -> DisassemblyResult:
+        """Disassemble a function into individual instructions.
+
+        Returns up to `limit` instructions (default 500) starting at `offset`;
+        `instruction_count` is the whole function. Pass a larger `limit` to get
+        everything at once.
+        """
         func = resolve_function(address)
         program = session.program
         listing = program.getListing()
@@ -200,13 +284,18 @@ def register(mcp: FastMCP) -> None:
 
         entry = func.getEntryPoint().getOffset()
         end_addr = body.getMaxAddress().getOffset() + 1 if body.getNumAddresses() > 0 else entry
+        page = paginate(instructions, offset, limit)
 
         return DisassemblyResult(
             function_name=func.getName(),
             start=format_address(entry),
             end=format_address(end_addr),
-            instruction_count=len(instructions),
-            instructions=instructions,
+            instruction_count=page["total"],
+            instructions=page["items"],
+            offset=page["offset"],
+            limit=page["limit"],
+            has_more=page["has_more"],
+            note=disassembly_note(page["offset"], len(page["items"]), page["total"]),
         )
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"functions"})
