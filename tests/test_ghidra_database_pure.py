@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pathlib
 
+from re_mcp_ghidra.tools.analysis import AnalysisCompleteResult, analysis_bounds
 from re_mcp_ghidra.tools.database import (
     DatabaseInfoResult,
     OpenDatabaseResult,
@@ -475,3 +476,89 @@ class TestExecutablePathIsExposed:
         assert marker, "register() not found - parser regression?"
         assert "database_info_paths(" in tool_bodies
         assert "program.getExecutablePath() or session.current_path" not in tool_bodies
+
+
+# ---------------------------------------------------------------------------
+# analyze_database bounds (#44) - same definition as get_database_info (#27)
+# ---------------------------------------------------------------------------
+
+
+class FakeAddressFactory:
+    def __init__(self, default_space: FakeSpace) -> None:
+        self._space = default_space
+
+    def getDefaultAddressSpace(self) -> FakeSpace:
+        return self._space
+
+
+class FakeProgram:
+    """Just enough ``Program`` for ``analysis_bounds``."""
+
+    def __init__(self, memory: FakeMemory, default_space: FakeSpace = RAM) -> None:
+        self._memory = memory
+        self._factory = FakeAddressFactory(default_space)
+
+    def getMemory(self) -> FakeMemory:
+        return self._memory
+
+    def getAddressFactory(self) -> FakeAddressFactory:
+        return self._factory
+
+
+class TestAnalyzeDatabaseUsesLoadedBounds:
+    """``analyze_database`` (and so the first ``wait_for_analysis``) must report
+    the bounds ``get_database_info`` reports, not ``Program.getMin/MaxAddress()``
+    (#44): PE ``0x1400C95FF`` instead of the ``tdb`` end ``0xFF0000184F``, ELF
+    ``0x148607`` instead of the section-header overlay end ``0x77F``."""
+
+    def test_program_min_max_address_no_longer_used(self):
+        source = ANALYSIS_PY.read_text(encoding="utf-8")
+        assert "getMinAddress(" not in source
+        assert "getMaxAddress(" not in source
+        assert "loaded_memory_bounds" in source
+
+    def test_pe_bounds_stop_at_reloc_not_tdb(self):
+        program = FakeProgram(
+            FakeMemory(
+                FakeBlock(0x140000000, 0x1400003FF),  # Headers
+                FakeBlock(0x140001000, 0x1400901FF),  # .text
+                FakeBlock(0x1400C8000, 0x1400C95FF),  # .reloc
+                FakeBlock(0xFF00000000, 0xFF0000184F, artificial=True),  # tdb
+            )
+        )
+        assert analysis_bounds(program) == ("0x140000000", "0x1400C95FF")
+
+    def test_elf_bounds_stop_at_bss_not_section_headers(self):
+        section_headers = FakeSpace("_elfSectionHeaders", loaded=False)
+        program = FakeProgram(
+            FakeMemory(
+                FakeBlock(0x100000, 0x100317),  # segment_2.1
+                FakeBlock(0x148080, 0x148607),  # .bss
+                FakeBlock(0x149000, 0x149477, artificial=True),  # EXTERNAL
+                FakeBlock(0x0, 0x77F, section_headers),
+            )
+        )
+        assert analysis_bounds(program) == ("0x100000", "0x148607")
+
+    def test_no_usable_block_reports_zero(self):
+        assert analysis_bounds(FakeProgram(FakeMemory())) == ("0x0", "0x0")
+
+    def test_bounds_agree_with_get_database_info_definition(self):
+        """Whatever ``loaded_memory_bounds`` picks is what ``analysis_bounds``
+        formats - the two tools cannot drift apart."""
+        mem = FakeMemory(
+            FakeBlock(0x10, 0x20, RAM2),
+            FakeBlock(0x100000, 0x1FFFFF, RAM2),
+        )
+        lo, hi = loaded_memory_bounds(mem, RAM)
+        assert analysis_bounds(FakeProgram(mem, RAM)) == (
+            f"0x{lo.getOffset():X}",
+            f"0x{hi.getOffset():X}",
+        )
+
+    def test_field_descriptions_point_at_get_database_info(self):
+        fields = AnalysisCompleteResult.model_fields
+        for name in ("min_address", "max_address"):
+            desc = (fields[name].description or "").lower()
+            assert "get_database_info" in desc
+            assert "one address space" in desc
