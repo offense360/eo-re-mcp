@@ -87,8 +87,7 @@ evidence. Status as of 2026-09-04.
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 | [#33](https://github.com/offense360/eo-re-mcp/issues/33) | IDA | IDA: rename_function and set_comment failures do not say why ('Failed to rename function to ...', 'Failed to set comment at 0x1')
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#34](https://github.com/offense360/eo-re-mcp/issues/34) | core | core: batch with a failing operation returns the whole BatchResult as a JSON string inside the error (triple-encoded), even with stop_on_error=False
- (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#34](https://github.com/offense360/eo-re-mcp/issues/34) | core | `batch` with a failing operation raised `BatchFailed` with the whole `BatchResult` as a JSON string inside the error (triple-encoded), even with `stop_on_error=False`; it now returns the structured `BatchResult` with `isError` set when any item failed, per-item `error` kept as the backend's error object. | Fixed (3ebc7b9) |
 | [#35](https://github.com/offense360/eo-re-mcp/issues/35) | IDA | IDA: list_local_types has no filter_pattern (Ghidra's does) — pinned tool with different parameters
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 | [#36](https://github.com/offense360/eo-re-mcp/issues/36) | all | set_type on a function address: IDA applies the prototype, Ghidra rejects it with "Unknown data type: '<whole prototype>'" and does not point at set_function_type
@@ -105,7 +104,7 @@ evidence. Status as of 2026-09-04.
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 | [#42](https://github.com/offense360/eo-re-mcp/issues/42) | Ghidra | Ghidra: decompiled_code uses CR LF line endings on Windows while IDA pseudocode uses LF
 | [#43](https://github.com/offense360/eo-re-mcp/issues/43) | Ghidra | EXTERNAL-space addresses need one consistent rendering: `get_call_graph` external callees (`0x94`), `get_imports`, and `get_xrefs_from` (which now skips them after #30) | Open |
-| [#44](https://github.com/offense360/eo-re-mcp/issues/44) | Ghidra | `analyze_database` / `wait_for_analysis` still report min/max_address across all address spaces (residual of #27) | Open |
+| [#44](https://github.com/offense360/eo-re-mcp/issues/44) | Ghidra | `analyze_database` still reported min/max_address across all address spaces (residual of #27); now uses the same loaded-memory bounds as `get_database_info` (`wait_for_analysis` never carried these fields). | Fixed (746ff69) |
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 
 ### Continuous integration on the fork
