@@ -16,10 +16,12 @@ from re_mcp.exceptions import BackendError
 
 from re_mcp_ghidra.helpers import (
     compile_filter,
+    describe_external,
     format_address,
     paginate_iter,
 )
 from re_mcp_ghidra.session import session
+from re_mcp_ghidra.tools.database import entry_points
 
 ANNO_RESOURCE: dict[str, bool] = {
     "readOnlyHint": True,
@@ -38,16 +40,13 @@ def _check_db() -> None:
 
 def _iter_entrypoints(filt: re.Pattern | None = None) -> Iterator[dict]:
     program = session.program
-    symbol_table = program.getSymbolTable()
-    for sym in symbol_table.getAllSymbols(True):
-        if sym.isExternalEntryPoint():
-            name = sym.getName()
-            if filt and not filt.search(name):
-                continue
-            yield {
-                "address": format_address(sym.getAddress().getOffset()),
-                "name": name,
-            }
+    for addr, name in entry_points(program.getSymbolTable()):
+        if filt and not filt.search(name):
+            continue
+        yield {
+            "address": format_address(addr.getOffset()),
+            "name": name,
+        }
 
 
 def _iter_imports(filt: re.Pattern | None = None) -> Iterator[dict]:
@@ -58,10 +57,14 @@ def _iter_imports(filt: re.Pattern | None = None) -> Iterator[dict]:
             name = ext_loc.getLabel()
             if filt and not filt.search(name) and not filt.search(lib_name):
                 continue
-            addr = ext_loc.getAddress()
+            # Same rendering as get_imports (#43): thunk address or None, plus
+            # the EXTERNAL:<library>::<name> form.  ExternalLocation.getAddress()
+            # is meaningless on a PE (negative for ordinal imports).
+            ext = describe_external(program, ext_loc.getExternalSpaceAddress())
             yield {
                 "module": lib_name,
-                "address": format_address(addr.getOffset()) if addr else "EXTERNAL",
+                "address": ext["thunk_address"],
+                "external_address": ext["address"],
                 "name": name,
             }
 
@@ -205,8 +208,8 @@ def register(mcp: FastMCP):
 
         name_count = sym_table.getNumSymbols()
 
-        # Entry points
-        entry_count = sum(1 for s in sym_table.getAllSymbols(True) if s.isExternalEntryPoint())
+        # Entry points: same address set as get_entry_points (#45)
+        entry_count = len(entry_points(sym_table))
 
         # Code coverage
         total_range = 0
