@@ -83,10 +83,8 @@ evidence. Status as of 2026-09-04.
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 | [#31](https://github.com/offense360/eo-re-mcp/issues/31) | Ghidra | `get_database_info.file_path` was Ghidra's `/C:/...` importer path; now the OS path, importer path exposed as `executable_path`. | Fixed (80fb690) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#32](https://github.com/offense360/eo-re-mcp/issues/32) | IDA | IDA: parse_type_declaration failures say only 'Failed to parse declaration' (Ghidra returns the parser's message)
- (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#33](https://github.com/offense360/eo-re-mcp/issues/33) | IDA | IDA: rename_function and set_comment failures do not say why ('Failed to rename function to ...', 'Failed to set comment at 0x1')
- (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
+| [#32](https://github.com/offense360/eo-re-mcp/issues/32) | IDA | `parse_type_declaration` failures said only 'Failed to parse declaration' (idalib exposes no parser diagnostics); the message now carries IDA's error count plus our own checks: bracket balance, missing trailing `;`, unknown type names (enum enumerators excluded). | Fixed (bd8eeb7) |
+| [#33](https://github.com/offense360/eo-re-mcp/issues/33) | IDA | `rename_function` / `rename_address` / `set_comment` / `append_comment` failures did not say why; now `InvalidName` (with the corrected identifier as a suggestion), `NameConflict` (names are never silently moved, which `set_name` otherwise does on 9.4) and `InvalidAddress` (unmapped address) are raised before the IDA call. | Fixed (0ecfb7b) |
 | [#34](https://github.com/offense360/eo-re-mcp/issues/34) | core | `batch` with a failing operation raised `BatchFailed` with the whole `BatchResult` as a JSON string inside the error (triple-encoded), even with `stop_on_error=False`; it now returns the structured `BatchResult` with `isError` set when any item failed, per-item `error` kept as the backend's error object. | Fixed (3ebc7b9) |
 | [#35](https://github.com/offense360/eo-re-mcp/issues/35) | IDA | IDA: list_local_types has no filter_pattern (Ghidra's does) — pinned tool with different parameters
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
