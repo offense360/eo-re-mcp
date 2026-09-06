@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import ida_nalt
 import pytest
+from pydantic import ValidationError
 from re_mcp_ida import helpers
 from re_mcp_ida.helpers import disassembly_note, page_lines
 
@@ -248,31 +249,33 @@ def test_decompilation_result_carries_page_fields(functions_mod):
     assert r.warnings == []
 
 
-def test_unpaged_payloads_still_validate_with_derived_defaults(functions_mod):
-    """Pre-#41 payloads (no page fields) stay valid: the page covers everything."""
-    dec = functions_mod.DecompilationResult.model_validate(
-        {"address": "0x401000", "name": "main", "pseudocode": "int main()\n{\n  return 0;\n}"}
-    )
-    assert dec.line_count == 4
-    assert dec.start_line == 0
-    assert dec.has_more is False
-    assert dec.next_line is None
-    assert dec.note is None
+def test_paging_fields_are_required_like_ghidra(functions_mod):
+    """Pre-#41 payloads (no page fields) are rejected: both backends share one schema."""
+    with pytest.raises(ValidationError) as ei:
+        functions_mod.DecompilationResult.model_validate(
+            {"address": "0x401000", "name": "main", "pseudocode": "int main() { return 0; }"}
+        )
+    missing = {e["loc"][0] for e in ei.value.errors() if e["type"] == "missing"}
+    assert missing == {"line_count", "start_line", "max_lines", "has_more"}
 
-    empty = functions_mod.DecompilationResult.model_validate(
-        {"address": "0x401000", "name": "main", "pseudocode": ""}
-    )
-    assert empty.line_count == 0
+    with pytest.raises(ValidationError) as ei:
+        functions_mod.DisassemblyResult.model_validate(
+            {
+                "address": "0x401000",
+                "name": "main",
+                "instruction_count": 1,
+                "instructions": [{"address": "0x401000", "disasm": "ret"}],
+            }
+        )
+    missing = {e["loc"][0] for e in ei.value.errors() if e["type"] == "missing"}
+    assert missing == {"offset", "limit", "has_more"}
 
-    dis = functions_mod.DisassemblyResult.model_validate(
-        {
-            "address": "0x401000",
-            "name": "main",
-            "instruction_count": 1,
-            "instructions": [{"address": "0x401000", "disasm": "ret"}],
-        }
-    )
-    assert dis.offset == 0
-    assert dis.limit == 500
-    assert dis.has_more is False
-    assert dis.note is None
+
+def test_no_model_validator_fills_page_fields():
+    tree = ast.parse(_FUNCTIONS_PY.read_text(encoding="utf-8"), filename=str(_FUNCTIONS_PY))
+    names = {
+        n.id if isinstance(n, ast.Name) else n.attr
+        for n in ast.walk(tree)
+        if isinstance(n, (ast.Name, ast.Attribute))
+    }
+    assert "model_validator" not in names

@@ -13,7 +13,7 @@ import ida_lines
 import ida_name
 import idautils
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from re_mcp_ida.helpers import (
     ANNO_DESTRUCTIVE,
@@ -122,27 +122,17 @@ class DecompilationResult(BaseModel):
         description="Non-fatal Hex-Rays warnings for the whole function, if any.",
     )
     line_count: int = Field(
-        default=0, description="Total pseudocode lines in the whole function, not just this page."
+        description="Total pseudocode lines in the whole function, not just this page."
     )
-    start_line: int = Field(default=0, description="0-based line this page starts at.")
-    max_lines: int = Field(default=2000, description="Page size that was applied.")
-    has_more: bool = Field(default=False, description="True when lines after this page remain.")
+    start_line: int = Field(description="0-based line this page starts at.")
+    max_lines: int = Field(description="Page size that was applied.")
+    has_more: bool = Field(description="True when lines after this page remain.")
     next_line: int | None = Field(
         default=None, description="start_line to pass for the next page, or null on the last."
     )
     note: str | None = Field(
         default=None, description="How to fetch the rest, present only when has_more is true."
     )
-
-    @model_validator(mode="before")
-    @classmethod
-    def _line_count_from_pseudocode(cls, data: object) -> object:
-        """An unpaged payload (no line_count) counts the lines it carries."""
-        if isinstance(data, dict) and "line_count" not in data:
-            text = data.get("pseudocode")
-            if isinstance(text, str):
-                data = {**data, "line_count": text.count("\n") + 1 if text else 0}
-        return data
 
 
 class DisassemblyInstruction(BaseModel):
@@ -163,11 +153,9 @@ class DisassemblyResult(BaseModel):
     instructions: list[DisassemblyInstruction] = Field(
         description="Instructions on this page (offset..offset+n-1)."
     )
-    offset: int = Field(default=0, description="Index of the first instruction on this page.")
-    limit: int = Field(default=500, description="Page size that was applied.")
-    has_more: bool = Field(
-        default=False, description="True when instructions after this page remain."
-    )
+    offset: int = Field(description="Index of the first instruction on this page.")
+    limit: int = Field(description="Page size that was applied.")
+    has_more: bool = Field(description="True when instructions after this page remain.")
     note: str | None = Field(
         default=None, description="How to fetch the rest, present only when has_more is true."
     )
