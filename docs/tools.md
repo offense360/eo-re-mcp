@@ -512,8 +512,8 @@ On IDA every mutating tool call creates an undo point before it runs, so `undo` 
 
 | Tool | Description |
 |------|-------------|
-| `undo` | Undo the last modification. |
-| `redo` | Redo the last undone change. |
+| `undo` | Undo the last modification (Ghidra: response carries `label`, `remaining_undo`, `remaining_redo`). |
+| `redo` | Redo the last undone change (Ghidra: response carries `label`, `remaining_undo`, `remaining_redo`). |
 
 ## Snapshots
 
