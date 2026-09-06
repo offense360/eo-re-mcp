@@ -26,16 +26,109 @@ remains responsive for incoming requests.
 
 from __future__ import annotations
 
+import functools
 import importlib
+import inspect
 import logging
 import pkgutil
 import threading
 from collections.abc import Callable
 from typing import Any
 
+from fastmcp.tools.function_tool import FunctionTool
 from re_mcp.server import BackendServer, MainThreadExecutor
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Undo points (issue #26): one mutating tool call == one undo step
+# ---------------------------------------------------------------------------
+
+#: The ``action_name`` every re-mcp undo point is filed under.  The ``label``
+#: is the tool name, so ``ida_undo.get_undo_action_label()`` names the call
+#: that ``undo`` is about to revert.
+UNDO_ACTION_NAME = "re-mcp"
+
+#: Mutating tools (``readOnlyHint: False``) that must *not* get an undo point:
+#:
+#: - ``undo`` / ``redo`` — a point created before them would truncate the
+#:   redo chain, so ``redo`` after ``undo`` could never find anything.
+#: - ``analyze_database`` / ``reanalyze_range`` — analysis is not an undo
+#:   unit (matches Ghidra, which clears the history after every pass; #18).
+#: - ``open_database`` / ``save_database`` / ``close_database`` — lifecycle,
+#:   not database edits.
+UNDO_POINT_EXEMPT: frozenset[str] = frozenset(
+    {
+        "undo",
+        "redo",
+        "analyze_database",
+        "reanalyze_range",
+        "open_database",
+        "save_database",
+        "close_database",
+    }
+)
+
+
+def _create_undo_point(name: str) -> bool:
+    """Create an IDA undo point labelled with the tool *name*.
+
+    Must run on the main (IDA) thread.  Never raises and never blocks the
+    tool: with no database open there is nothing to snapshot, and a refused
+    or failing ``create_undo_point`` only costs undo granularity.
+    """
+    from re_mcp_ida.session import session  # noqa: PLC0415
+
+    if not session.is_open():
+        return False
+    try:
+        import ida_undo  # noqa: PLC0415
+
+        ok = bool(ida_undo.create_undo_point(UNDO_ACTION_NAME, name))
+    except Exception:
+        log.warning("create_undo_point raised before %s; continuing", name, exc_info=True)
+        return False
+    if not ok:
+        log.debug("create_undo_point failed before %s (undo disabled?)", name)
+    return ok
+
+
+def _with_undo_point(name: str, fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap tool *fn* so an undo point is created right before it runs.
+
+    A sync *fn* gets a sync wrapper (``BackendServer._wrap_sync`` then sends
+    the whole wrapper to the main thread, so the point and the body run on
+    the same thread).  An async *fn* gets an async wrapper that dispatches
+    the point through ``call_ida`` before awaiting the body.
+    """
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            from re_mcp_ida.helpers import call_ida  # noqa: PLC0415
+
+            await call_ida(_create_undo_point, name)
+            return await fn(*args, **kwargs)
+
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        _create_undo_point(name)
+        return fn(*args, **kwargs)
+
+    return sync_wrapper
+
+
+def _is_mutating(kwargs: dict[str, Any]) -> bool:
+    """A tool is mutating only when its annotations say ``readOnlyHint: False``."""
+    annotations = kwargs.get("annotations")
+    if annotations is None:
+        return False
+    if not isinstance(annotations, dict):  # mcp.types.ToolAnnotations
+        annotations = annotations.model_dump()
+    return annotations.get("readOnlyHint") is False
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +167,33 @@ class IDAServer(BackendServer):
         from re_mcp_ida.helpers import call_ida  # noqa: PLC0415
 
         return await call_ida(fn, *args, **kwargs)
+
+    @staticmethod
+    def _guard(name: str, fn: Callable[..., Any], kwargs: dict[str, Any]) -> Callable[..., Any]:
+        """Return *fn* wrapped with an undo point when the tool is mutating."""
+        if name in UNDO_POINT_EXEMPT or not _is_mutating(kwargs):
+            return fn
+        return _with_undo_point(name, fn)
+
+    def tool(
+        self, name_or_fn: str | Callable[..., Any] | None = None, **kwargs: Any
+    ) -> Callable[[Callable[..., Any]], FunctionTool] | FunctionTool:
+        """Register a tool; mutating tools get an undo point before each call (#26).
+
+        Mirrors the three call shapes ``BackendServer.tool`` accepts
+        (``@tool``, ``@tool("name", ...)``, ``@tool(...)``).
+        """
+        if callable(name_or_fn):
+            fn = name_or_fn
+            return super().tool(self._guard(fn.__name__, fn, kwargs), **kwargs)
+
+        explicit_name = name_or_fn if isinstance(name_or_fn, str) else None
+        parent = super().tool(name_or_fn, **kwargs)
+
+        def wrapping_decorator(fn: Callable[..., Any]) -> FunctionTool:
+            return parent(self._guard(explicit_name or fn.__name__, fn, kwargs))
+
+        return wrapping_decorator
 
 
 # ---------------------------------------------------------------------------

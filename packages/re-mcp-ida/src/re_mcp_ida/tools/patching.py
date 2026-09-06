@@ -9,7 +9,6 @@ from __future__ import annotations
 import ida_bytes
 import ida_funcs
 import ida_ua
-import ida_undo
 import idc
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -106,10 +105,7 @@ def register(mcp: FastMCP):
         # Read old bytes for the response
         old_bytes = ida_bytes.get_bytes(ea, len(new_bytes))
 
-        # Create an undo point so the patch can be reverted
-        ida_undo.create_undo_point("patch_bytes", "patch_bytes")
-
-        # Patch atomically
+        # Patch atomically (IDAServer.tool() created the undo point).
         ida_bytes.patch_bytes(ea, new_bytes)
 
         return PatchBytesResult(
