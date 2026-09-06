@@ -109,8 +109,8 @@ class DecompilationResult(BaseModel):
     address: str = Field(description="Function start address (hex).")
     name: str = Field(description="Function name.")
     pseudocode: str = Field(description="Decompiled C pseudocode.")
-    warnings: list[DecompilerWarning] | None = Field(
-        default=None, description="Non-fatal Hex-Rays warnings, if any."
+    warnings: list[DecompilerWarning] = Field(
+        default_factory=list, description="Non-fatal Hex-Rays warnings, if any."
     )
 
 
@@ -355,12 +355,11 @@ def register(mcp: FastMCP):
         cfunc, func = decompile_at(target)
         sv = cfunc.get_pseudocode()
         lines = [ida_lines.tag_remove(sv[i].line) for i in range(sv.size())]
-        warnings = collect_warnings(cfunc)
         return DecompilationResult(
             address=format_address(func.start_ea),
             name=get_func_name(func.start_ea),
             pseudocode="\n".join(lines),
-            warnings=warnings or None,
+            warnings=collect_warnings(cfunc),
         )
 
     @mcp.tool(

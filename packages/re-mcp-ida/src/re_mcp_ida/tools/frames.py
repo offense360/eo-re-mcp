@@ -237,8 +237,8 @@ def register(mcp: FastMCP):
                 stack points.
             delta: Correct SP delta for that instruction (bytes, negative for a push).
         """
-        func = resolve_function(address)
         ea = resolve_address(address)
+        func = resolve_function(ea)
 
         sp_ea = stack_point_ea(ea)
         old_delta = ida_frame.get_sp_delta(func, sp_ea)
@@ -268,14 +268,15 @@ def register(mcp: FastMCP):
         """Remove a set_stack_delta override; IDA's own stack points are never deleted.
 
         Only user stack points are removed (NotFound otherwise). IDA does not recreate
-        the automatic point the override replaced; if the instruction's own SP effect
-        is needed again, re-create the instruction so IDA re-emulates it.
+        the automatic point the override replaced; to get the instruction's own SP
+        effect back, re-create the instruction (undefine, make_code) and run
+        analyze_database so IDA re-emulates it.
 
         Args:
             address: Address of the instruction whose override should be dropped.
         """
-        func = resolve_function(address)
         ea = resolve_address(address)
+        func = resolve_function(ea)
 
         sp_ea = stack_point_ea(ea)
         old_delta = ida_frame.get_sp_delta(func, sp_ea)

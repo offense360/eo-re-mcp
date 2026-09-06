@@ -617,12 +617,13 @@ def register(mcp: FastMCP):
             source_name: Variable to merge away.
             target_name: Variable to merge it into.
         """
+        if source_name == target_name:
+            raise IDAError("Cannot map a variable onto itself", error_type="InvalidArgument")
+
         cfunc, func = decompile_at(function_address)
 
         source = _find_lvar(cfunc, source_name)
         target = _find_lvar(cfunc, target_name)
-        if source_name == target_name:
-            raise IDAError("Cannot map a variable onto itself", error_type="InvalidArgument")
 
         lvinf = ida_hexrays.lvar_uservec_t()
         ida_hexrays.restore_user_lvar_settings(lvinf, func.start_ea)

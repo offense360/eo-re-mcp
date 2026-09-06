@@ -75,7 +75,8 @@ Function prototypes and calling conventions.
 | `get_function_type` | Get function signature, return type, calling convention, and parameters. |
 | `set_function_type` | Set a function's prototype from a C declaration string. |
 | `set_function_calling_convention` | Change calling convention (cdecl, stdcall, fastcall, thiscall, pascal). |
-| `set_call_type` | Force the callee prototype at one call site, for indirect calls with no symbol (IDA). |
+| `set_call_type` | Sets the call-site operand type (Hex-Rays uses it with highest priority); undo with `clear_call_type` (IDA). |
+| `clear_call_type` | Remove the call-site operand type pinned by `set_call_type` (IDA). |
 
 ## Function Flags
 
@@ -108,8 +109,8 @@ Stack frame and local variable analysis.
 |------|-------------|
 | `get_stack_frame` | Get the stack frame layout: members with offsets, sizes, and names. |
 | `get_function_vars` | Get local variables via decompilation: names, types, widths, arg/result flags. |
-| `set_stack_delta` | Override the SP delta at an address — the fix for "positive sp value" (IDA). |
-| `delete_stack_delta` | Remove an SP delta override (IDA). |
+| `set_stack_delta` | Override the SP delta of an instruction — the fix for "positive sp value"; the point is recorded at the instruction end (`applies_at`) (IDA). |
+| `delete_stack_delta` | Remove a `set_stack_delta` override; IDA's own stack points are never deleted (IDA). |
 
 ## Cross-References
 
