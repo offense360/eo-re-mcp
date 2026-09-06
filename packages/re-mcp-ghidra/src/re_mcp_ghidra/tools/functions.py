@@ -75,7 +75,10 @@ def register(mcp: FastMCP) -> None:
         limit: Limit = 100,
         filter_pattern: FilterPattern = "",
     ) -> dict:
-        """List all functions in the database, paginated with optional regex filter."""
+        """List all functions in the database, paginated with optional regex filter.
+
+        External functions are not listed; see get_database_info.external_function_count.
+        """
         program = session.program
         func_mgr = program.getFunctionManager()
         filt = compile_filter(filter_pattern)

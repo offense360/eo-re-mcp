@@ -120,6 +120,20 @@ def loaded_memory_bounds(memory: Any, default_space: Any = None) -> tuple[Any, A
     return (lowest, highest)
 
 
+def count_functions(func_mgr: Any) -> tuple[int, int]:
+    """Return ``(internal, external)`` function counts.
+
+    ``FunctionManager.getFunctionCount()`` includes external (import thunk)
+    functions, but ``getFunctions(True)`` — what ``list_functions`` iterates —
+    does not.  Reporting the raw count made ``get_database_info.function_count``
+    disagree with ``list_functions.total`` by exactly the number of externals
+    (2006 vs 1775 on a PE, 543 vs 403 on an ELF) (#29).
+    """
+    external = sum(1 for _ in func_mgr.getExternalFunctions())
+    internal = func_mgr.getFunctionCount() - external
+    return (internal, external)
+
+
 class OpenDatabaseResult(BaseModel):
     status: str = Field(description="Operation status.")
     path: str = Field(description="Path to the opened file.")
@@ -128,6 +142,13 @@ class OpenDatabaseResult(BaseModel):
     bitness: int = Field(description="Address size in bits.")
     file_type: str = Field(description="File format.")
     function_count: int = Field(description="Number of functions.")
+    external_function_count: int = Field(
+        default=0,
+        description=(
+            "External (import thunk) functions, not included in function_count "
+            "and not listed by list_functions."
+        ),
+    )
     segment_count: int = Field(description="Number of memory segments.")
     capabilities: dict[str, bool] = Field(description="Available capabilities.")
     warnings: list[str] = Field(default_factory=list, description="Any warnings.")
@@ -179,6 +200,13 @@ class DatabaseInfoResult(BaseModel):
     )
     image_base: str = Field(description="Image base address (hex).")
     function_count: int = Field(description="Number of functions.")
+    external_function_count: int = Field(
+        default=0,
+        description=(
+            "External (import thunk) functions, not included in function_count "
+            "and not listed by list_functions."
+        ),
+    )
     segment_count: int = Field(description="Number of memory blocks.")
     entry_point_count: int = Field(description="Number of entry points.")
     capabilities: dict[str, bool] = Field(description="Available capabilities.")
@@ -212,6 +240,7 @@ def register(mcp: FastMCP) -> None:
         program = session.program
         lang = program.getLanguage()
         mem = program.getMemory()
+        internal_funcs, external_funcs = count_functions(program.getFunctionManager())
 
         return OpenDatabaseResult(
             status="ok",
@@ -220,7 +249,8 @@ def register(mcp: FastMCP) -> None:
             processor=str(lang.getLanguageID()),
             bitness=lang.getLanguageDescription().getSize(),
             file_type=program.getExecutableFormat() or "unknown",
-            function_count=program.getFunctionManager().getFunctionCount(),
+            function_count=internal_funcs,
+            external_function_count=external_funcs,
             segment_count=len(list(mem.getBlocks())),
             capabilities=session.capabilities,
             warnings=result.get("warnings", []),
@@ -250,6 +280,7 @@ def register(mcp: FastMCP) -> None:
         # default-space address (#27).
         default_space = program.getAddressFactory().getDefaultAddressSpace()
         min_addr, max_addr = loaded_memory_bounds(mem, default_space)
+        internal_funcs, external_funcs = count_functions(func_mgr)
 
         entry_count = sum(1 for s in sym_table.getAllSymbols(True) if s.isExternalEntryPoint())
 
@@ -263,7 +294,8 @@ def register(mcp: FastMCP) -> None:
             min_address=format_address(min_addr.getOffset()) if min_addr else "0x0",
             max_address=format_address(max_addr.getOffset()) if max_addr else "0x0",
             image_base=format_address(program.getImageBase().getOffset()),
-            function_count=func_mgr.getFunctionCount(),
+            function_count=internal_funcs,
+            external_function_count=external_funcs,
             segment_count=len(blocks),
             entry_point_count=entry_count,
             capabilities=session.capabilities,

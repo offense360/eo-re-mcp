@@ -22,6 +22,7 @@ from re_mcp_ghidra.helpers import (
     transaction,
 )
 from re_mcp_ghidra.session import session
+from re_mcp_ghidra.tools.database import count_functions
 
 
 class ReanalyzeRangeResult(BaseModel):
@@ -36,7 +37,12 @@ class AnalysisCompleteResult(BaseModel):
     """Result of waiting for analysis to complete, with a database summary."""
 
     status: str = Field(description="Status: 'analysis_complete'.")
-    function_count: int = Field(description="Number of functions after analysis.")
+    function_count: int = Field(
+        description=(
+            "Number of functions after analysis, matching list_functions.total "
+            "(external functions excluded, see get_database_info)."
+        )
+    )
     segment_count: int = Field(description="Number of memory blocks.")
     entry_point_count: int = Field(description="Number of entry points.")
     min_address: str = Field(description="Minimum address (hex).")
@@ -118,7 +124,7 @@ def register(mcp: FastMCP) -> None:
         memory = program.getMemory()
         sym_table = program.getSymbolTable()
 
-        func_count = func_mgr.getFunctionCount()
+        func_count, _external_count = count_functions(func_mgr)
         block_count = memory.getBlocks().__len__()
 
         # Count entry points via the symbol table

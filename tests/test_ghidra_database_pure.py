@@ -16,17 +16,24 @@ from __future__ import annotations
 
 import pathlib
 
-from re_mcp_ghidra.tools.database import DatabaseInfoResult, loaded_memory_bounds
+from re_mcp_ghidra.tools.database import (
+    DatabaseInfoResult,
+    OpenDatabaseResult,
+    count_functions,
+    loaded_memory_bounds,
+)
 
-DATABASE_PY = (
+GHIDRA_TOOLS_DIR = (
     pathlib.Path(__file__).resolve().parent.parent
     / "packages"
     / "re-mcp-ghidra"
     / "src"
     / "re_mcp_ghidra"
     / "tools"
-    / "database.py"
 )
+DATABASE_PY = GHIDRA_TOOLS_DIR / "database.py"
+ANALYSIS_PY = GHIDRA_TOOLS_DIR / "analysis.py"
+FUNCTIONS_PY = GHIDRA_TOOLS_DIR / "functions.py"
 
 
 # ---------------------------------------------------------------------------
@@ -352,3 +359,74 @@ class TestGetDatabaseInfoUsesLoadedBounds:
             desc = (fields[name].description or "").lower()
             assert "fall back" in desc
             assert "artificial ones included" in desc
+
+
+# ---------------------------------------------------------------------------
+# Issue #29 — function_count must match list_functions.total
+# ---------------------------------------------------------------------------
+
+
+class FakeFunctionManager:
+    """``FunctionManager.getFunctionCount()`` counts external functions too,
+    while ``getFunctions(True)`` — what ``list_functions`` iterates — does not."""
+
+    def __init__(self, total: int, external: int) -> None:
+        self.total, self.external = total, external
+
+    def getFunctionCount(self) -> int:
+        return self.total
+
+    def getExternalFunctions(self):
+        return iter([f"extern_{i}" for i in range(self.external)])
+
+
+class TestCountFunctions:
+    def test_pe_case_matches_list_functions_total(self):
+        """Real curl.exe: get_database_info said 2006, list_functions said 1775."""
+        assert count_functions(FakeFunctionManager(2006, 231)) == (1775, 231)
+
+    def test_elf_case(self):
+        """Real ELF: 543 reported vs 403 listed."""
+        assert count_functions(FakeFunctionManager(543, 140)) == (403, 140)
+
+    def test_no_external_functions(self):
+        assert count_functions(FakeFunctionManager(12, 0)) == (12, 0)
+
+    def test_empty_program(self):
+        assert count_functions(FakeFunctionManager(0, 0)) == (0, 0)
+
+    def test_external_iterable_is_consumed_once(self):
+        """``getExternalFunctions()`` returns a one-shot Java iterator."""
+        mgr = FakeFunctionManager(5, 2)
+        assert count_functions(mgr) == (3, 2)
+
+
+class TestExternalFunctionCountIsReported:
+    def test_both_result_models_expose_the_field(self):
+        for model in (DatabaseInfoResult, OpenDatabaseResult):
+            field = model.model_fields["external_function_count"]
+            assert field.default == 0
+            desc = (field.description or "").lower()
+            assert "external" in desc
+            assert "not included in function_count" in desc
+            assert "list_functions" in desc
+
+    def test_raw_get_function_count_is_gone_from_the_tool_bodies(self):
+        source = DATABASE_PY.read_text(encoding="utf-8")
+        _, marker, tool_bodies = source.partition("def register(")
+        assert marker, "register() not found - parser regression?"
+        assert "getFunctionCount()" not in tool_bodies
+        # open_database + get_database_info
+        assert tool_bodies.count("count_functions(") == 2
+
+    def test_analysis_uses_the_shared_counter(self):
+        source = ANALYSIS_PY.read_text(encoding="utf-8")
+        assert "count_functions" in source
+        assert "func_mgr.getFunctionCount()" not in source
+
+    def test_list_functions_docstring_points_at_the_new_field(self):
+        source = FUNCTIONS_PY.read_text(encoding="utf-8")
+        assert (
+            "External functions are not listed; see get_database_info.external_function_count."
+            in source
+        )
