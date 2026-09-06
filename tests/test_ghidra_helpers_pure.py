@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import pytest
 from re_mcp_ghidra.exceptions import GhidraError
-from re_mcp_ghidra.helpers import check_range_in_memory, transaction, write_memory
+from re_mcp_ghidra.helpers import (
+    check_range_in_memory,
+    to_ghidra_address,
+    transaction,
+    write_memory,
+)
+from re_mcp_ghidra.session import session as ghidra_session
 
 
 class FakeProgram:
@@ -229,3 +235,134 @@ class TestWriteMemoryValidatesBeforeMutating:
         assert program.calls == [("start", "Patch bytes", 42), ("end", 42, True)]
         assert program.listing.cleared == [(0x1FFC, 0x1FFF)]
         assert program.memory.writes == [(0x1FFC, b"\x90\x90\x90\x90")]
+
+
+# ---------------------------------------------------------------------------
+# to_ghidra_address range/conversion guards (#28)
+# ---------------------------------------------------------------------------
+
+
+class FakeAddressSpace:
+    """Stands in for ``ghidra.program.model.address.AddressSpace``.
+
+    ``getMaxAddress().getOffset()`` comes back through JPype as a Java signed
+    long, so a 64-bit space reports ``-1`` rather than ``0xFFFFFFFFFFFFFFFF``.
+    ``getAddress`` reproduces JPype's ``OverflowError`` for Python ints that do
+    not fit a Java long.
+    """
+
+    def __init__(self, max_offset: int) -> None:
+        self.max_offset = max_offset
+        self.calls: list[int] = []
+        self.handed_out: list[FakeAddr] = []
+        self.raises: Exception | None = None
+
+    def getMaxAddress(self) -> FakeAddr:
+        return FakeAddr(self.max_offset)
+
+    def getAddress(self, offset: int) -> FakeAddr:
+        self.calls.append(offset)
+        if self.raises is not None:
+            raise self.raises
+        if not (-(2**63) <= offset < 2**63):
+            raise OverflowError("int too big to convert")
+        addr = FakeAddr(offset)
+        self.handed_out.append(addr)
+        return addr
+
+
+class FakeAddressFactory:
+    def __init__(self, space: FakeAddressSpace) -> None:
+        self.space = space
+
+    def getDefaultAddressSpace(self) -> FakeAddressSpace:
+        return self.space
+
+
+class FakeSpaceProgram:
+    def __init__(self, space: FakeAddressSpace) -> None:
+        self.factory = FakeAddressFactory(space)
+
+    def getAddressFactory(self) -> FakeAddressFactory:
+        return self.factory
+
+
+@pytest.fixture
+def open_space(monkeypatch):
+    """Install a fake open program whose default space has *max_offset*."""
+
+    def _install(max_offset: int) -> FakeAddressSpace:
+        space = FakeAddressSpace(max_offset)
+        monkeypatch.setattr(ghidra_session, "_program", FakeSpaceProgram(space))
+        return space
+
+    return _install
+
+
+class TestToGhidraAddressRejectsOutOfRange:
+    """#28: an unconvertible address must surface as a typed GhidraError.
+
+    Before the fix, a Python int above 2**63-1 reached JPype and escaped as a
+    bare ``OverflowError: int too big to convert`` — no ``error_type``, no
+    address in the message, and no JSON error body for the client.
+    """
+
+    def test_in_range_offset_returns_the_space_address_unchanged(self, open_space):
+        space = open_space(0xFFFFFFFF)
+        addr = to_ghidra_address(0x401000)
+        assert addr is space.handed_out[-1]
+        assert addr.getOffset() == 0x401000
+        assert space.calls == [0x401000]
+
+    def test_offset_above_max_raises_invalid_address_from_the_range_check(self, open_space):
+        space = open_space(0xFFFFFFFF)
+        with pytest.raises(GhidraError) as ei:
+            to_ghidra_address(0x1_0000_0000)
+        assert ei.value.error_type == "InvalidAddress"
+        assert "0x100000000" in str(ei.value)
+        assert "outside the program's address space" in str(ei.value)
+        assert "0xFFFFFFFF" in str(ei.value)
+        # The range check must fire before Ghidra is asked to convert anything.
+        assert space.calls == []
+
+    def test_java_signed_max_offset_is_normalised_for_a_64bit_space(self, open_space):
+        """A 64-bit space reports ``-1``; that must not reject every address."""
+        space = open_space(-1)
+        addr = to_ghidra_address(0x140007CC4)
+        assert addr.getOffset() == 0x140007CC4
+        assert space.calls == [0x140007CC4]
+
+    @pytest.mark.parametrize("max_offset", [-1, 0xFFFFFFFFFFFFFFFF])
+    def test_offset_inside_64bit_space_but_too_big_for_java_long(self, open_space, max_offset):
+        """0xFFFFFFFFFFFFFFF0 is inside a 64-bit space, so the range check
+        passes and only the try/except around ``getAddress`` can catch it."""
+        space = open_space(max_offset)
+        with pytest.raises(GhidraError) as ei:
+            to_ghidra_address(0xFFFFFFFFFFFFFFF0)
+        assert ei.value.error_type == "InvalidAddress"
+        assert "0xFFFFFFFFFFFFFFF0" in str(ei.value)
+        assert "int too big to convert" in str(ei.value)
+        assert space.calls == [0xFFFFFFFFFFFFFFF0]
+
+    def test_negative_offset_raises_invalid_address_with_a_readable_message(self, open_space):
+        space = open_space(-1)
+        with pytest.raises(GhidraError) as ei:
+            to_ghidra_address(-1)
+        assert ei.value.error_type == "InvalidAddress"
+        assert "-0x1" in str(ei.value)
+        assert "0x-1" not in str(ei.value)
+        assert space.calls == []
+
+    def test_ghidra_error_from_get_address_is_not_rewrapped(self, open_space):
+        space = open_space(0xFFFFFFFF)
+        space.raises = GhidraError("space said no", error_type="NotFound")
+        with pytest.raises(GhidraError) as ei:
+            to_ghidra_address(0x1000)
+        assert ei.value is space.raises
+        assert ei.value.error_type == "NotFound"
+
+    def test_no_open_database_still_reports_no_database(self, monkeypatch):
+        monkeypatch.setattr(ghidra_session, "_program", None)
+        with pytest.raises(GhidraError) as ei:
+            to_ghidra_address(0x1000)
+        assert ei.value.error_type == "NoDatabase"

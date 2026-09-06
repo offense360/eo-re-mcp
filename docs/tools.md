@@ -18,7 +18,7 @@ Tools not in the pinned set are hidden from the listing but callable via `call`,
 
 ## Conventions
 
-**Addresses** can be specified as hex strings (`"0x401000"`), decimal (`"4198400"`), symbol names (`"main"`), or bare hex (`"4010a0"` — used as a last resort when the string is not a known symbol). Prefer the `0x` prefix for unambiguous hex.
+**Addresses** can be specified as hex strings (`"0x401000"`), decimal (`"4198400"`), symbol names (`"main"`), or bare hex (`"4010a0"` — used as a last resort when the string is not a known symbol). Prefer the `0x` prefix for unambiguous hex. An address that falls outside the program's address space (negative, or above the space's maximum offset) is rejected with `error_type: InvalidAddress` naming the offending address and the valid range (Ghidra).
 
 **Pagination** — tools that return lists accept `offset` (default 0) and `limit` (default 100; some tools default to 50 or 20) parameters, and return `items`, `total`, `offset`, `limit`, and `has_more` fields.
 
