@@ -25,16 +25,17 @@ contributor's branch or the upstream PR disappears.
 |---|---|---|---|---|
 | [#47](https://github.com/jtsylve/re-mcp/pull/47) Bump cryptography 49.0.0 → 50.0.0 | dependabot | `upstream/pr-47-cryptography-50` | **Merged** into `main` (`--no-ff`, commit `de66a55`) | — |
 | [#46](https://github.com/jtsylve/re-mcp/pull/46) Add `analyze_database`, make `wait_for_analysis` run analysis on demand | [@shaiku](https://github.com/shaiku) | `upstream/pr-46-analyze-database` | **Merged** into `main` via `adopt/pr-46` with two fix commits (metadata refresh, error latch) and doc updates | [#4](https://github.com/offense360/eo-re-mcp/issues/4) adoption, [#5](https://github.com/offense360/eo-re-mcp/issues/5) follow-ups |
-| [#48](https://github.com/jtsylve/re-mcp/pull/48) Expose Hex-Rays features (7 new IDA tools) | [@Absolucy](https://github.com/Absolucy) | `upstream/pr-48-hexrays-tools` | **Not adopted.** `set_call_type` and `set_stack_delta` do not match the Hex-Rays SDK contract; needs fixes and IDA runtime verification | [#6](https://github.com/offense360/eo-re-mcp/issues/6) |
+| [#48](https://github.com/jtsylve/re-mcp/pull/48) Expose Hex-Rays features (7 new IDA tools) | [@Absolucy](https://github.com/Absolucy) | `upstream/pr-48-hexrays-tools` | **Merged** into `main` via `adopt/pr-48` (`--no-ff`, commit `5a017cb`, contributor commit `2fe5990` preserved) with five fix commits verified on IDA 9.4: `set_call_type` uses the call-site operand type (`set_op_tinfo`) and gained `clear_call_type`; stack deltas are recorded at the instruction end and only user points are deleted; `call_flags` kept on zero-argument calls; `_obj_string` guarded with `is_strlit`; `refresh_decompilation.was_cached` read via `has_cached_cfunc` | [#6](https://github.com/offense360/eo-re-mcp/issues/6) |
 
 ### Verification performed before adoption
 
 Every upstream PR was reviewed, then independently re-verified before merge:
 static review, unit reproduction of each claimed defect under the existing
 test stubs, and runtime experiments on the Ghidra backend (Ghidra 12.1.2)
-where applicable. IDA Pro was not available, so IDA-only changes were checked
+where applicable. For PR #46/#47 IDA Pro was not available, so IDA-only changes were checked
 against the public IDA SDK headers, IDAPython SWIG sources and Hex-Rays
-documentation. Details are in the tracking issues linked above.
+documentation. PR #48 was verified at runtime on an IDA Professional 9.4 machine
+(idalib probes and MCP scenarios). Details are in the tracking issues linked above.
 
 ## Fork issue log
 
@@ -50,7 +51,7 @@ evidence. Status as of 2026-09-04.
 | [#3](https://github.com/offense360/eo-re-mcp/issues/3) | core | `GHIDRA_MCP_*` logging variables ignored (`LOG_DIR` everywhere; `LOG_RUN`, `LABEL`, `LOG_LEVEL` in workers); process-wide env prefix added | Fixed (cca50e3) |
 | [#4](https://github.com/offense360/eo-re-mcp/issues/4) | upstream | Adopt upstream PR #46 with fixes for explicit-call metadata and error latch | Done (6a4ce8c) |
 | [#5](https://github.com/offense360/eo-re-mcp/issues/5) | core | Analysis state tracked as one task for all start paths: no double analysis, spawn window closed, on-demand notifications | Fixed (e3471d5) |
-| [#6](https://github.com/offense360/eo-re-mcp/issues/6) | upstream | Track upstream PR #48; not adopted pending `set_call_type` / `set_stack_delta` fixes and IDA verification | Open, needs IDA |
+| [#6](https://github.com/offense360/eo-re-mcp/issues/6) | upstream | Adopt upstream PR #48 (Hex-Rays tools). Stage 1 confirmed all five review findings at runtime on IDA 9.4 (plus a sixth: `mark_cfunc_dirty` always returns true); stage 2 merged the contributor commit with the fixes and verified 12 MCP scenarios on the VM. | Done (5a017cb) |
 | [#7](https://github.com/offense360/eo-re-mcp/issues/7) | core | Supervisor reported `closed` even when the worker's close/save failed; response now carries `close_error` | Fixed (4e60011) |
 | [#8](https://github.com/offense360/eo-re-mcp/issues/8) | all | Already-analyzed databases were re-analyzed on first `wait_for_analysis`; backends now report `analyzed`, core seeds the flag. Also replaced the nonexistent `setAnalyzedFlag` call. | Fixed (3c3d755); IDA path unverified, see #12 |
 | [#9](https://github.com/offense360/eo-re-mcp/issues/9) | Ghidra | Reopening a project whose program was never saved raised `FileNotFoundException`; now re-imports | Fixed (fbfcf51) |
