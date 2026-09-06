@@ -138,3 +138,28 @@ def test_success_path_never_diagnoses(typeinf_mod, monkeypatch):
 
     assert result.saved is True
     assert result.name == "ok32"
+
+
+# ---------------------------------------------------------------------------
+# enum bodies: enumerators are not type names
+# ---------------------------------------------------------------------------
+
+
+def test_enum_enumerators_are_not_types(typeinf_mod):
+    diags = typeinf_mod.diagnose_declaration("enum E { A = 1, B }", TIL)
+
+    assert diags == ["declaration does not end with ';'"]
+
+
+@pytest.mark.parametrize(
+    "decl",
+    ["enum E { A, B };", "typedef enum { A = 1, B = A + 1 } e_t;"],
+)
+def test_valid_enum_has_no_diagnostics(typeinf_mod, decl):
+    assert typeinf_mod.diagnose_declaration(decl, TIL) == []
+
+
+def test_enum_member_type_in_struct_is_still_checked(typeinf_mod):
+    diags = typeinf_mod.diagnose_declaration("struct S { enum E e; foo_t f; };", TIL)
+
+    assert diags == ["unknown type 'foo_t'"]

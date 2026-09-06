@@ -221,6 +221,7 @@ _SEGMENT_RE = re.compile(r"([^;{}]*)([;{}]|$)")
 _ARRAY_RE = re.compile(r"\[[^\]]*\]")
 _BITFIELD_RE = re.compile(r":\s*\d+")
 _TYPE_DECL_RE = re.compile(r"(struct|union|enum|typedef)\b")
+_ENUM_HEADER_RE = re.compile(r"\benum\b")
 
 
 def _strip_comments(text: str) -> str:
@@ -251,8 +252,9 @@ def diagnose_declaration(declaration: str, til) -> list[str]:
 
     Returns human-readable findings in check order: bracket balance,
     missing trailing ``;`` on type declarations, and identifiers in type
-    position that the local type library does not know.  An empty list
-    means none of these checks found anything.
+    position that the local type library does not know.  Identifiers inside
+    an enum body are enumerators, not types, and are not looked up.  An
+    empty list means none of these checks found anything.
     """
     text = _strip_comments(declaration)
     diags: list[str] = []
@@ -276,12 +278,17 @@ def diagnose_declaration(declaration: str, til) -> list[str]:
     # struct/union/enum header whose tag is a definition, not a use.
     candidates: list[str] = []
     prev_delim = ""
+    in_enum = False
     for segment, delim in _SEGMENT_RE.findall(text):
-        if delim != "{":
+        if delim == "{":
+            in_enum = _ENUM_HEADER_RE.search(segment) is not None
+        elif not in_enum:
             after_close_brace = prev_delim == "}"
             for piece in re.split(r"[(),]", segment):
                 candidates.extend(_type_position_idents(piece, after_close_brace=after_close_brace))
                 after_close_brace = False
+        if delim == "}":
+            in_enum = False
         prev_delim = delim
     seen: set[str] = set()
     for name in candidates:
