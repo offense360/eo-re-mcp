@@ -381,7 +381,13 @@ class BatchItemResult(BaseModel):
     index: int = Field(description="0-based position in the input list.")
     tool: str = Field(description="Tool that was called.")
     result: Any = Field(default=None, description="Tool result on success, null on error.")
-    error: str | None = Field(default=None, description="Error message if this item failed.")
+    error: dict[str, Any] | str | None = Field(
+        default=None,
+        description=(
+            "Error if this item failed: the backend's error object "
+            "(`error`, `error_type`, ...) when available, otherwise the message text."
+        ),
+    )
 
 
 class BatchResult(BaseModel):
@@ -394,6 +400,39 @@ class BatchResult(BaseModel):
         default=False,
         description="Whether batch stopped before completing all operations (stop_on_error or client cancellation).",
     )
+
+
+def _item_error(exc: BaseException) -> dict[str, Any] | str:
+    """Turn a per-item exception into a JSON-friendly error value.
+
+    Worker and :class:`BackendError` messages are already JSON objects
+    (``{"error": ..., "error_type": ..., ...}``); keep them as objects so the
+    client is not handed a string-inside-a-string.  Anything else stays text.
+    """
+    text = str(exc)
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            return text
+        if isinstance(parsed, dict):
+            return parsed
+    return text
+
+
+def _batch_summary(batch_result: BatchResult) -> str:
+    """One-line summary plus one line per failed item, for text-only clients."""
+    lines = [f"batch: {batch_result.succeeded} succeeded, {batch_result.failed} failed"]
+    if batch_result.cancelled:
+        lines[0] += ", cancelled"
+    for item in batch_result.results:
+        if item.error is None:
+            continue
+        message = (
+            item.error.get("error", item.error) if isinstance(item.error, dict) else item.error
+        )
+        lines.append(f"- [{item.index}] {item.tool}: {message}")
+    return "\n".join(lines)
 
 
 _EXECUTE_DESCRIPTION_PREAMBLE = """\
@@ -862,7 +901,7 @@ class ToolTransform(CatalogTransform):
                 Field(description="Stop on first error instead of continuing."),
             ] = True,
             ctx: Context | None = None,
-        ) -> BatchResult:
+        ) -> ToolResult:
             """Run 2+ independent tool calls in a single request with per-item error collection.
 
             Preferred over `execute` for independent calls (no sandbox overhead).
@@ -873,6 +912,10 @@ class ToolTransform(CatalogTransform):
 
             `database` is auto-injected into each operation — omit from params.
             Override per-operation with explicit `database` for cross-DB work.
+
+            Always returns the structured `BatchResult` (`succeeded`, `failed`,
+            `cancelled`, per-item `result`/`error`); the response is flagged
+            `isError` when any operation failed.
             """
             if ctx is None:
                 raise BackendError("batch requires an MCP context")
@@ -892,7 +935,9 @@ class ToolTransform(CatalogTransform):
                         results.append(BatchItemResult(index=i, tool=op.tool, result=payload))
                         succeeded += 1
                     except Exception as exc:
-                        results.append(BatchItemResult(index=i, tool=op.tool, error=str(exc)))
+                        results.append(
+                            BatchItemResult(index=i, tool=op.tool, error=_item_error(exc))
+                        )
                         failed += 1
 
                     if i + 1 < len(operations):
@@ -911,18 +956,21 @@ class ToolTransform(CatalogTransform):
                 cancelled=cancelled,
             )
 
-            # Raise when any operation failed so the MCP response has
-            # isError=True — otherwise the client sees a "successful" call
-            # with errors buried in the results array.
-            if failed > 0:
-                raise BackendError(
-                    batch_result.model_dump_json(),
-                    error_type="BatchFailed",
-                )
+            # Flag the MCP response with isError when any operation failed so
+            # failures are not buried in the results array — but keep the
+            # BatchResult itself as structured content (raising would turn the
+            # whole payload, successes included, into an error string).
+            return ToolResult(
+                content=_batch_summary(batch_result),
+                structured_content=batch_result.model_dump(),
+                is_error=failed > 0,
+            )
 
-            return batch_result
-
-        return Tool.from_function(fn=batch, name="batch")
+        return Tool.from_function(
+            fn=batch,
+            name="batch",
+            output_schema=BatchResult.model_json_schema(),
+        )
 
     # ------------------------------------------------------------------
     # call — lightweight proxy for calling any tool by name
