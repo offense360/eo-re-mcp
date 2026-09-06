@@ -15,6 +15,7 @@ import importlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import ida_bytes
 import ida_frame
 import ida_hexrays
 import ida_nalt
@@ -125,3 +126,78 @@ def test_delete_stack_delta_removes_user_point_at_instruction_end(frames_mod):
     assert frames_mod.delete_user_stack_point(func, 0x1000) == 0x1004
 
     ida_frame.del_stkpnt.assert_called_once_with(func, 0x1004)
+
+
+# ---------------------------------------------------------------------------
+# get_ctree call flags / find_ctree_patterns string refs (tools/ctree.py)
+# ---------------------------------------------------------------------------
+
+# hexrays.hpp: CFL_FINAL 0x0001, CFL_HELPER 0x0002, CFL_NORET 0x0004
+_CFL_CONSTANTS = {"CFL_FINAL": 0x1, "CFL_HELPER": 0x2, "CFL_NORET": 0x4}
+
+
+@pytest.fixture(scope="module")
+def ctree_mod():
+    for name, value in _CFL_CONSTANTS.items():
+        setattr(ida_hexrays, name, value)
+    # the flag tables are built at import time, so (re)load after the constants exist
+    return importlib.reload(importlib.import_module("re_mcp_ida.tools.ctree"))
+
+
+class _EmptyCarglist:
+    """Mimics ``carglist_t``: ``__len__`` only, no ``__bool__`` (so it is falsy when empty)."""
+
+    def __init__(self, flags: int):
+        self.flags = flags
+
+    def __len__(self) -> int:
+        return 0
+
+
+def test_call_flags_kept_for_zero_arg_call(ctree_mod):
+    expr = SimpleNamespace(a=_EmptyCarglist(flags=0x3))
+    assert not expr.a  # the trap the contributor code fell into
+
+    assert ctree_mod._call_flags(expr) == ["FINAL", "HELPER"]
+
+
+def test_call_flags_empty_without_arglist(ctree_mod):
+    assert ctree_mod._call_flags(SimpleNamespace(a=None)) == []
+
+
+@pytest.fixture
+def strlit_stubs():
+    ida_bytes.get_flags.reset_mock()
+    ida_bytes.is_strlit.reset_mock()
+    ida_bytes.get_max_strlit_length.reset_mock()
+    ida_bytes.get_strlit_contents.reset_mock()
+    ida_nalt.get_str_type.reset_mock()
+    ida_bytes.get_flags.return_value = 0x500
+    ida_nalt.get_str_type.return_value = ida_nalt.STRTYPE_C
+    ida_bytes.get_max_strlit_length.return_value = 8
+    ida_bytes.get_strlit_contents.return_value = b"PARSER2"
+
+
+def test_obj_string_returns_none_for_non_strlit(ctree_mod, strlit_stubs):
+    ida_bytes.is_strlit.return_value = False
+
+    assert ctree_mod._obj_string(0x140001010) is None
+
+    ida_bytes.is_strlit.assert_called_once_with(0x500)
+    ida_bytes.get_max_strlit_length.assert_not_called()
+
+
+def test_obj_string_decodes_strlit(ctree_mod, strlit_stubs):
+    ida_bytes.is_strlit.return_value = True
+
+    assert ctree_mod._obj_string(0x14000A690) == "PARSER2"
+
+    ida_bytes.get_max_strlit_length.assert_called_once_with(0x14000A690, ida_nalt.STRTYPE_C)
+
+
+def test_obj_string_returns_none_for_empty_strlit(ctree_mod, strlit_stubs):
+    ida_bytes.is_strlit.return_value = True
+    ida_bytes.get_max_strlit_length.return_value = 0
+
+    assert ctree_mod._obj_string(0x14000A690) is None
+    ida_bytes.get_strlit_contents.assert_not_called()

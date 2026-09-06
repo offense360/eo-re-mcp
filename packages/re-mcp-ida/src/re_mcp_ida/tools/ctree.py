@@ -196,11 +196,10 @@ def register(mcp: FastMCP):
                         call_target = _item_to_dict(expr.x, current_depth - 1)
                         if call_target:
                             result["call_target"] = call_target
-                    if expr.a:
-                        call_flags = _decode_flags(expr.a.flags, _CFL_NAMES)
-                        if call_flags:
-                            result["call_flags"] = call_flags
-                    if expr.a and current_depth > 1:
+                    call_flags = _call_flags(expr)
+                    if call_flags:
+                        result["call_flags"] = call_flags
+                    if expr.a is not None and len(expr.a) and current_depth > 1:
                         args = []
                         for i in range(len(expr.a)):
                             arg = _item_to_dict(expr.a[i], current_depth - 1)
@@ -314,7 +313,7 @@ def register(mcp: FastMCP):
 
                     call_info = CtreeCallInfo(
                         callee=target_name,
-                        arg_count=len(expr.a) if expr.a else 0,
+                        arg_count=len(expr.a) if expr.a is not None else 0,
                         callee_address=format_address(target_addr)
                         if target_addr is not None
                         else None,
@@ -488,14 +487,31 @@ def _decode_flags(value: int, table: dict[int, str]) -> list[str]:
     return [name for bit, name in table.items() if value & bit]
 
 
+def _call_flags(expr) -> list[str]:
+    """Decoded ``CFL_*`` flags of a call expression.
+
+    ``carglist_t`` defines ``__len__`` but not ``__bool__``, so an empty argument
+    list is falsy; test against ``None`` or a zero-argument call loses its flags
+    (issue #6).
+    """
+    if expr.a is None:
+        return []
+    return _decode_flags(expr.a.flags, _CFL_NAMES)
+
+
 def _obj_string(ea: int) -> str | None:
-    """Read the string literal at *ea*, or ``None`` if it can't be decoded."""
+    """Read the string literal at *ea*, or ``None`` if there is none."""
     if is_bad_addr(ea):
         return None
-    strtype = ida_nalt.get_str_type(ea)
-    if strtype is None:
+    # get_str_type returns an int for every address (0xFFFFFFFF when not a
+    # string), and get_max_strlit_length rejects that value — gate on the flags.
+    if not ida_bytes.is_strlit(ida_bytes.get_flags(ea)):
         return None
-    return decode_string(ea, ida_bytes.get_max_strlit_length(ea, strtype), strtype)
+    strtype = ida_nalt.get_str_type(ea)
+    length = ida_bytes.get_max_strlit_length(ea, strtype)
+    if length <= 0:
+        return None
+    return decode_string(ea, length, strtype)
 
 
 def _operand_summary(expr, cfunc) -> dict | None:
