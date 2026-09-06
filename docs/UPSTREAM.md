@@ -73,15 +73,15 @@ evidence. Status as of 2026-09-04.
 | [#25](https://github.com/offense360/eo-re-mcp/issues/25) | IDA | IDA 9.4 deprecates the `func_t *`-based `ida_funcs`/`ida_frame` API (~30 call sites); replacements are 9.4-only. Decision 2026-09-06: keep the current API; migrate and raise the floor to 9.4 when Hex-Rays announces removal or a 9.4-only API is needed. | Deferred, trigger: removal notice or 9.4-only feature |
 | [#26](https://github.com/offense360/eo-re-mcp/issues/26) | IDA | `undo`/`redo` only worked after `patch_bytes`/`patch_asm` (the only tools that created undo points, inherited from upstream) and then reverted everything since. `IDAServer.tool()` now creates an undo point before every tool whose annotations say `readOnlyHint: False` (lifecycle, analysis and undo/redo exempt), and responses carry the reverted call's `label`. Verified on IDA 9.4. | Fixed (91cee9e) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#27](https://github.com/offense360/eo-re-mcp/issues/27) | Ghidra | Ghidra: get_database_info.max_address is the raw offset of the highest address in any address space (ELF reports 0x77F below min_address 0x100000)
+| [#27](https://github.com/offense360/eo-re-mcp/issues/27) | Ghidra | `get_database_info.max_address` came from `Memory.getMaxAddress()` across all address spaces (ELF `0x77F` below `min_address`; PE `tdb` block). Bounds now come from loaded, non-artificial blocks in one address space (`loaded_memory_bounds`). | Fixed (80fb690) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#28](https://github.com/offense360/eo-re-mcp/issues/28) | Ghidra | Ghidra: an address above 2^63-1 leaks 'int too big to convert' (OverflowError) with no error_type
+| [#28](https://github.com/offense360/eo-re-mcp/issues/28) | Ghidra | An address above 2^63-1 leaked JPype's `OverflowError` with no `error_type`; `to_ghidra_address` now range-checks and raises `InvalidAddress`. | Fixed (ee54c42) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#29](https://github.com/offense360/eo-re-mcp/issues/29) | Ghidra | Ghidra: get_database_info.function_count (2006) disagrees with list_functions.total (1775) because external functions are counted only by the former
+| [#29](https://github.com/offense360/eo-re-mcp/issues/29) | Ghidra | `function_count` (2006) disagreed with `list_functions.total` (1775): externals were counted only by the former. `function_count` now excludes externals everywhere and `external_function_count` is reported. | Fixed (80fb690) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#30](https://github.com/offense360/eo-re-mcp/issues/30) | Ghidra | Ghidra: get_xrefs_from renders stack/register references as absolute addresses (to_address "0x8", ref_type WRITE)
+| [#30](https://github.com/offense360/eo-re-mcp/issues/30) | Ghidra | `get_xrefs_from` rendered stack/register references as absolute addresses (`0x8`); non-memory references are now omitted and counted in `skipped_non_memory` (also applied to the switch tools). | Fixed (ee54c42) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
-| [#31](https://github.com/offense360/eo-re-mcp/issues/31) | Ghidra | Ghidra: get_database_info.file_path is Ghidra's '/C:/...' executable path while open_database/list_databases return the OS path
+| [#31](https://github.com/offense360/eo-re-mcp/issues/31) | Ghidra | `get_database_info.file_path` was Ghidra's `/C:/...` importer path; now the OS path, importer path exposed as `executable_path`. | Fixed (80fb690) |
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 | [#32](https://github.com/offense360/eo-re-mcp/issues/32) | IDA | IDA: parse_type_declaration failures say only 'Failed to parse declaration' (Ghidra returns the parser's message)
  (bug; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
@@ -104,6 +104,8 @@ evidence. Status as of 2026-09-04.
 | [#41](https://github.com/offense360/eo-re-mcp/issues/41) | all | disassemble_function / decompile_function have no pagination or size cap: 478 KB and 123 KB responses for the largest ELF function
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 | [#42](https://github.com/offense360/eo-re-mcp/issues/42) | Ghidra | Ghidra: decompiled_code uses CR LF line endings on Windows while IDA pseudocode uses LF
+| [#43](https://github.com/offense360/eo-re-mcp/issues/43) | Ghidra | EXTERNAL-space addresses need one consistent rendering: `get_call_graph` external callees (`0x94`), `get_imports`, and `get_xrefs_from` (which now skips them after #30) | Open |
+| [#44](https://github.com/offense360/eo-re-mcp/issues/44) | Ghidra | `analyze_database` / `wait_for_analysis` still report min/max_address across all address spaces (residual of #27) | Open |
  (enhancement; found in the 2026-09-06 real-usage run on `curl.exe` / WSL `curl`) | Open |
 
 ### Continuous integration on the fork
