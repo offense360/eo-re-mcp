@@ -60,7 +60,7 @@ Function analysis — listing, querying, decompilation, and disassembly.
 |------|-------------|
 | `list_functions` | List functions with optional regex filter and type filtering (thunk, library, noreturn, user). Supports batch mode for multiple patterns in one pass. Paginated. |
 | `get_function` | Get detailed info for a function at an address or by name: name, bounds, size, flags, comments, and chunks. |
-| `decompile_function` | Decompile a function to pseudocode. Accepts address or name. For multiple functions, use the `batch` meta-tool. |
+| `decompile_function` | Decompile a function to pseudocode (LF line endings on every backend). Accepts address or name. For multiple functions, use the `batch` meta-tool. |
 | `disassemble_function` | Get the full disassembly listing of a function. |
 | `rename_function` | Rename a function. |
 | `delete_function` | Delete a function definition (underlying code remains). |
@@ -488,7 +488,7 @@ Batch export tools, output file generation, and executable rebuilding.
 
 | Tool | Description |
 |------|-------------|
-| `export_all_pseudocode` | Batch decompile functions (default 50 per call). Optional regex filter. Paginated. |
+| `export_all_pseudocode` | Batch decompile functions (default 50 per call; LF line endings on every backend). Optional regex filter. Paginated. |
 | `export_all_disassembly` | Batch export disassembly for functions (default 50 per call). Optional regex filter. Paginated. |
 | `generate_output_file` | Generate an IDA output file (asm, lst, map, dif, idc) (IDA). |
 | `generate_exe_file` | Rebuild an executable from the database (IDA). |

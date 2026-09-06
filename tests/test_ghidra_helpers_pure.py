@@ -12,10 +12,14 @@ object that records ``startTransaction``/``endTransaction`` calls.
 
 from __future__ import annotations
 
+import ast
+import pathlib
+
 import pytest
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
     check_range_in_memory,
+    normalize_pseudocode,
     to_ghidra_address,
     transaction,
     write_memory,
@@ -366,3 +370,98 @@ class TestToGhidraAddressRejectsOutOfRange:
         with pytest.raises(GhidraError) as ei:
             to_ghidra_address(0x1000)
         assert ei.value.error_type == "NoDatabase"
+
+
+# ---------------------------------------------------------------------------
+# normalize_pseudocode (#42)
+# ---------------------------------------------------------------------------
+
+_GHIDRA_TOOLS = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / "packages/re-mcp-ghidra/src/re_mcp_ghidra/tools"
+)
+
+
+class TestNormalizePseudocode:
+    """Ghidra's ``getC()`` is CR LF with one blank line at each end; IDA is LF-only."""
+
+    def test_crlf_and_padding_blank_lines_become_ida_shape(self):
+        raw = "\r\nint f(void)\r\n\r\n{\r\n  return 0;\r\n}\r\n\r\n"
+        assert normalize_pseudocode(raw) == "int f(void)\n\n{\n  return 0;\n}"
+
+    def test_lf_input_is_unchanged(self):
+        code = "int f(void)\n\n{\n  return 0;\n}"
+        assert normalize_pseudocode(code) == code
+
+    def test_empty_string_stays_empty(self):
+        assert normalize_pseudocode("") == ""
+
+    def test_lone_cr_becomes_lf(self):
+        assert normalize_pseudocode("a\rb\r\nc") == "a\nb\nc"
+
+    def test_escaped_backslash_sequences_in_string_literals_survive(self):
+        code = 'puts("a\\r\\nb");'
+        assert "\\r\\n" in code  # sanity: two-character escapes, not control chars
+        assert normalize_pseudocode(code) == code
+
+    def test_form_feed_and_unicode_line_separators_do_not_split_lines(self):
+        # str.splitlines() would break these into several lines; they are
+        # characters inside a string literal and must stay on one line.
+        code = 'x = "a\x0cb\u2028c\x85d";'
+        result = normalize_pseudocode(code)
+        assert result == code
+        assert result.count("\n") == 0
+
+
+def _tool_body(path: pathlib.Path, name: str) -> ast.FunctionDef:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    register = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "register")
+    return next(n for n in register.body if isinstance(n, ast.FunctionDef) and n.name == name)
+
+
+def _getc_calls_outside_normalize(path: pathlib.Path) -> list[int]:
+    """Line numbers of every ``.getC()`` call not passed straight to ``normalize_pseudocode``."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    wrapped: set[int] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "normalize_pseudocode"
+        ):
+            for arg in node.args:
+                if (
+                    isinstance(arg, ast.Call)
+                    and isinstance(arg.func, ast.Attribute)
+                    and arg.func.attr == "getC"
+                ):
+                    wrapped.add(id(arg))
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "getC"
+        and id(node) not in wrapped
+    ]
+
+
+def _calls_normalize(fn: ast.FunctionDef) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "normalize_pseudocode"
+        for n in ast.walk(fn)
+    )
+
+
+class TestPseudocodeToolsUseNormalize:
+    def test_decompile_function_normalizes_getc(self):
+        path = _GHIDRA_TOOLS / "functions.py"
+        assert _calls_normalize(_tool_body(path, "decompile_function"))
+        assert _getc_calls_outside_normalize(path) == []
+
+    def test_export_all_pseudocode_normalizes_getc(self):
+        path = _GHIDRA_TOOLS / "export.py"
+        assert _calls_normalize(_tool_body(path, "export_all_pseudocode"))
+        assert _getc_calls_outside_normalize(path) == []

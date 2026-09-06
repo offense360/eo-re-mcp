@@ -18,6 +18,7 @@ from re_mcp_ghidra.helpers import (
     Offset,
     compile_filter,
     format_address,
+    normalize_pseudocode,
     paginate,
 )
 from re_mcp_ghidra.session import session
@@ -32,7 +33,12 @@ class ExportedPseudocode(BaseModel):
 
     name: str = Field(description="Function name.")
     address: str = Field(description="Function address (hex).")
-    pseudocode: str = Field(description="Decompiled pseudocode.")
+    pseudocode: str = Field(
+        description=(
+            "Decompiled C pseudocode; LF line endings, no leading/trailing blank lines "
+            "(same shape as IDA's pseudocode)."
+        )
+    )
 
 
 class ExportError(BaseModel):
@@ -152,7 +158,7 @@ def register(mcp: FastMCP) -> None:
                         ExportedPseudocode(
                             name=name,
                             address=format_address(addr.getOffset()),
-                            pseudocode=decomp_func.getC(),
+                            pseudocode=normalize_pseudocode(decomp_func.getC()),
                         )
                     )
                 except Exception as e:

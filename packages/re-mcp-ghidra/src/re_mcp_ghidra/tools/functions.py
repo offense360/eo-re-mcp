@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from fastmcp import FastMCP
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
@@ -19,6 +19,7 @@ from re_mcp_ghidra.helpers import (
     Offset,
     compile_filter,
     format_address,
+    normalize_pseudocode,
     paginate_iter,
     resolve_function,
     transaction,
@@ -43,7 +44,12 @@ class FunctionDetail(BaseModel):
 class DecompilationResult(BaseModel):
     function_name: str
     address: str
-    decompiled_code: str
+    decompiled_code: str = Field(
+        description=(
+            "Decompiled C pseudocode; LF line endings, no leading/trailing blank lines "
+            "(same shape as IDA's pseudocode)."
+        )
+    )
 
 
 class Instruction(BaseModel):
@@ -150,11 +156,10 @@ def register(mcp: FastMCP) -> None:
                     "Decompilation returned no result", error_type="DecompilationFailed"
                 )
 
-            code = decomp_func.getC()
             return DecompilationResult(
                 function_name=func.getName(),
                 address=format_address(func.getEntryPoint().getOffset()),
-                decompiled_code=code,
+                decompiled_code=normalize_pseudocode(decomp_func.getC()),
             )
         finally:
             decomp.dispose()
