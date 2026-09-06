@@ -17,6 +17,7 @@ from typing import Annotated, Any
 import ida_bytes
 import ida_funcs
 import ida_hexrays
+import ida_idaapi
 import ida_kernwin
 import ida_lines
 import ida_nalt
@@ -74,6 +75,8 @@ __all__ = [
     "build_strlist",
     "call_ida",
     "check_cancelled",
+    "check_mapped",
+    "check_new_name",
     "clean_disasm_line",
     "collect_warnings",
     "compile_filter",
@@ -270,6 +273,43 @@ def resolve_function(addr: str | int) -> ida_funcs.func_t:
     if func is None:
         raise IDAError(f"No function at {format_address(ea)}", error_type="NotFound")
     return func
+
+
+@ida_dispatch
+def check_new_name(ea: int, new_name: str, *, what: str = "name") -> None:
+    """Raise :class:`IDAError` with the reason before ``set_name`` is attempted.
+
+    ``ida_name.set_name(..., SN_CHECK)`` returns a bare ``False`` for an
+    invalid identifier and, worse, silently *moves* a name that already
+    exists at another address.  Check both up front so the caller can
+    report why (``InvalidName`` / ``NameConflict``) and never move a name.
+    """
+    if not new_name:
+        raise IDAError(f"New {what} must not be empty", error_type="InvalidName")
+    if not ida_name.is_ident(new_name):
+        suggested = ida_name.validate_name(new_name, ida_name.VNT_IDENT) or ""
+        raise IDAError(
+            f"Invalid {what} {new_name!r}: IDA identifiers may contain only letters, "
+            f"digits and '_' and must not start with a digit; suggested {suggested!r}",
+            error_type="InvalidName",
+        )
+    other = ida_name.get_name_ea(ida_idaapi.BADADDR, new_name)
+    if other != ida_idaapi.BADADDR and other != ea:
+        raise IDAError(
+            f"{what} {new_name!r} is already used at {format_address(other)}; "
+            "rename that first or choose another name",
+            error_type="NameConflict",
+        )
+
+
+@ida_dispatch
+def check_mapped(ea: int, *, purpose: str) -> None:
+    """Raise ``InvalidAddress`` if *ea* is not backed by any segment."""
+    if not ida_bytes.is_mapped(ea):
+        raise IDAError(
+            f"Address {format_address(ea)} is not in any segment; cannot {purpose}",
+            error_type="InvalidAddress",
+        )
 
 
 @ida_dispatch

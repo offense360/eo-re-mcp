@@ -28,6 +28,7 @@ from re_mcp_ida.helpers import (
     Offset,
     async_paginate_iter,
     call_ida,
+    check_new_name,
     clean_disasm_line,
     collect_warnings,
     compile_filter,
@@ -457,9 +458,13 @@ def register(mcp: FastMCP):
         func = resolve_function(address)
 
         old_name = get_func_name(func.start_ea)
+        check_new_name(func.start_ea, new_name, what="function name")
         success = ida_name.set_name(func.start_ea, new_name, ida_name.SN_CHECK)
         if not success:
-            raise IDAError(f"Failed to rename function to {new_name!r}", error_type="RenameFailed")
+            raise IDAError(
+                f"Failed to rename function to {new_name!r} (IDA rejected the name)",
+                error_type="RenameFailed",
+            )
 
         return RenameResult(
             address=format_address(func.start_ea),
