@@ -60,8 +60,8 @@ Function analysis — listing, querying, decompilation, and disassembly.
 |------|-------------|
 | `list_functions` | List functions with optional regex filter and type filtering (thunk, library, noreturn, user). Supports batch mode for multiple patterns in one pass. Paginated. |
 | `get_function` | Get detailed info for a function at an address or by name: name, bounds, size, flags, comments, and chunks. |
-| `decompile_function` | Decompile a function to pseudocode (LF line endings on every backend). Accepts address or name. For multiple functions, use the `batch` meta-tool. |
-| `disassemble_function` | Get the full disassembly listing of a function. |
+| `decompile_function` | Decompile a function to pseudocode (LF line endings on every backend). Accepts address or name. Paginated: default 2000 lines (`start_line` / `max_lines`), `has_more` + `note` tell you to fetch more; pass a larger `max_lines` for everything. `line_count` is the whole function and line numbers are 0-based (IDA: same numbering as `get_pseudocode_line_map`). Ghidra caches the decompiled text per function until the database changes. For multiple functions, use the `batch` meta-tool. |
+| `disassemble_function` | Disassemble a function into instructions. Paginated: default 500 instructions (`offset` / `limit`), `has_more` + `note` tell you to fetch more; pass a larger `limit` for everything. `instruction_count` is the whole function. |
 | `rename_function` | Rename a function. |
 | `delete_function` | Delete a function definition (underlying code remains). |
 | `set_function_bounds` | Change a function's end address (IDA). |

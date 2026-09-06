@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import Any
+from typing import Annotated, Any
 
+from pydantic import Field
 from re_mcp.helpers import (
     ANNO_DESTRUCTIVE,
     ANNO_MUTATE,
@@ -49,15 +50,19 @@ __all__ = [
     "HexBytes",
     "Limit",
     "Offset",
+    "PseudocodeLine",
+    "PseudocodeLines",
     "async_paginate_iter",
     "call_ghidra",
     "check_range_in_memory",
     "compile_filter",
     "describe_external",
+    "disassembly_note",
     "format_address",
     "format_permissions",
     "is_external_address",
     "normalize_pseudocode",
+    "page_lines",
     "paginate",
     "paginate_iter",
     "parse_address",
@@ -73,6 +78,13 @@ __all__ = [
 
 # Backend dispatch alias
 call_ghidra = dispatch_to_main
+
+# Paging parameters for decompile_function (#41); no absolute ceiling, the
+# default is the guard.
+PseudocodeLine = Annotated[int, Field(description="0-based pseudocode line to start from.", ge=0)]
+PseudocodeLines = Annotated[
+    int, Field(description="Maximum number of pseudocode lines to return.", ge=1)
+]
 
 
 # ---------------------------------------------------------------------------
@@ -395,3 +407,49 @@ def normalize_pseudocode(code: str) -> str:
     appear inside string literals in the decompiled code.
     """
     return code.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+
+
+# ---------------------------------------------------------------------------
+# Paging (#41)
+# ---------------------------------------------------------------------------
+
+
+def page_lines(lines: list[str], start_line: int, max_lines: int) -> dict[str, Any]:
+    """Slice ``lines`` for one page of pseudocode.
+
+    Returns ``{"text", "line_count", "start_line", "max_lines", "has_more",
+    "next_line", "note"}``.  Line numbers are 0-based over the whole function,
+    so line *i* of the page is line ``start_line + i`` of the function.  A
+    ``start_line`` past the end yields an empty page, not an error.
+    """
+    start_line = max(0, start_line)
+    max_lines = max(1, max_lines)
+    total = len(lines)
+    page = lines[start_line : start_line + max_lines]
+    has_more = start_line + len(page) < total
+    next_line = start_line + len(page) if has_more else None
+    note = None
+    if has_more:
+        note = (
+            f"Showing lines {start_line}-{start_line + len(page) - 1} of {total}; "
+            f"call again with start_line={next_line} for more."
+        )
+    return {
+        "text": "\n".join(page),
+        "line_count": total,
+        "start_line": start_line,
+        "max_lines": max_lines,
+        "has_more": has_more,
+        "next_line": next_line,
+        "note": note,
+    }
+
+
+def disassembly_note(offset: int, page_len: int, total: int) -> str | None:
+    """Guidance string for a paged disassembly, or ``None`` when the page is the last."""
+    if page_len <= 0 or offset + page_len >= total:
+        return None
+    return (
+        f"Showing instructions {offset}-{offset + page_len - 1} of {total}; "
+        f"call again with offset={offset + page_len} for more."
+    )
