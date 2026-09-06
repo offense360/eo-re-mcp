@@ -119,7 +119,7 @@ Cross-reference queries and call graph analysis.
 | Tool | Description |
 |------|-------------|
 | `get_xrefs_to` | Get all references TO an address (what references it). For multiple addresses, use the `batch` meta-tool. Paginated. |
-| `get_xrefs_from` | Get all references FROM an address (what it references). Paginated. |
+| `get_xrefs_from` | Get all references FROM an address (what it references). Paginated. References whose target is not a memory address are omitted: stack, register and constant targets, and references into Ghidra's EXTERNAL space — a reference to an imported symbol yields no item. `skipped_non_memory` reports how many were left out across all references from the address, not just the current page (Ghidra). |
 | `get_call_graph` | Get the call graph for a function — callers and callees. `depth` controls traversal (1-3, default 1). |
 
 ## Cross-Reference Manipulation
@@ -451,7 +451,7 @@ Switch/jump table analysis.
 | Tool | Description |
 |------|-------------|
 | `get_switch_info` | Get switch table info at an indirect jump: cases, targets, element size. |
-| `list_switches` | Find all switches in the database. Paginated. |
+| `list_switches` | Find all switches in the database. Paginated. `num_cases` counts memory reference targets only, matching `get_switch_info` (Ghidra). |
 
 ## Bookmarks
 

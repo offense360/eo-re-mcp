@@ -35,11 +35,69 @@ class XrefFrom(BaseModel):
     is_call: bool = Field(description="True if this is a call reference.")
 
 
+class XrefsFromResult(BaseModel):
+    """A page of references FROM an address."""
+
+    items: list[XrefFrom] = Field(description="References on this page.")
+    total: int = Field(description="Total memory references from the address.")
+    offset: int = Field(description="Starting offset.")
+    limit: int = Field(description="Maximum references per page.")
+    has_more: bool = Field(description="Whether more references exist.")
+    skipped_non_memory: int = Field(
+        default=0,
+        description=(
+            "References omitted from items because their target is not a memory "
+            "address: stack, register and constant targets, and references into "
+            "Ghidra's EXTERNAL space (an imported symbol). Counted across all "
+            "references from the address, not just this page."
+        ),
+    )
+
+
 class CallGraphEntry(BaseModel):
     name: str
     address: str
     callers: list[dict] = Field(default_factory=list)
     callees: list[dict] = Field(default_factory=list)
+
+
+def is_memory_reference(ref) -> bool:
+    """True when *ref* points at an address that can be rendered as a hex address.
+
+    A ``Stack[0x8]`` or register target has an offset like any other address, so
+    formatting it produces a plausible-looking but meaningless memory address
+    (#30).  A reference to an imported symbol is dropped for the same reason:
+    it targets Ghidra's artificial EXTERNAL space, where the offset is a slot
+    index rather than an address any other tool can resolve.  Both the address
+    space and the reference's own flags are checked:
+    the flags are what Ghidra sets when it builds the reference, and the space
+    is what decides whether the offset means anything to the other tools.
+    """
+    to = ref.getToAddress()
+    return (
+        to is not None
+        and to.isMemoryAddress()
+        and not ref.isStackReference()
+        and not ref.isRegisterReference()
+    )
+
+
+def collect_xrefs_from(refs, build_item) -> tuple[list, int]:
+    """Split *refs* into rendered items and a count of the non-memory ones.
+
+    *build_item* renders one kept reference; it is passed in because the tool's
+    renderer closes over the program's ``FunctionManager``, which this module
+    has no way to reach.  The whole iterable is consumed so the skipped count
+    describes every reference from the address rather than one page's worth.
+    """
+    items: list = []
+    skipped = 0
+    for ref in refs:
+        if not is_memory_reference(ref):
+            skipped += 1
+            continue
+        items.append(build_item(ref))
+    return items, skipped
 
 
 def register(mcp: FastMCP) -> None:
@@ -77,27 +135,33 @@ def register(mcp: FastMCP) -> None:
         address: Address,
         offset: Offset = 0,
         limit: Limit = 100,
-    ) -> dict:
-        """Get all cross-references FROM an address."""
+    ) -> XrefsFromResult:
+        """Get all cross-references FROM an address.
+
+        References whose target is not a memory address are omitted — stack,
+        register and constant targets, and references into Ghidra's EXTERNAL
+        space (an imported symbol). Rendering those offsets as hex is
+        misleading. The number omitted is reported as ``skipped_non_memory``.
+        """
         program = session.program
         ref_mgr = program.getReferenceManager()
         func_mgr = program.getFunctionManager()
         source = resolve_address(address)
 
-        def _gen():
-            refs = ref_mgr.getReferencesFrom(source)
-            for ref in refs:
-                to_addr = ref.getToAddress()
-                func = func_mgr.getFunctionContaining(to_addr)
-                ref_type = ref.getReferenceType()
-                yield XrefFrom(
-                    to_address=format_address(to_addr.getOffset()),
-                    to_function=func.getName() if func else "",
-                    ref_type=str(ref_type),
-                    is_call=ref_type.isCall(),
-                ).model_dump()
+        def _render(ref) -> dict:
+            to_addr = ref.getToAddress()
+            func = func_mgr.getFunctionContaining(to_addr)
+            ref_type = ref.getReferenceType()
+            return XrefFrom(
+                to_address=format_address(to_addr.getOffset()),
+                to_function=func.getName() if func else "",
+                ref_type=str(ref_type),
+                is_call=ref_type.isCall(),
+            ).model_dump()
 
-        return paginate_iter(_gen(), offset, limit)
+        items, skipped = collect_xrefs_from(ref_mgr.getReferencesFrom(source), _render)
+        page = paginate_iter(items, offset, limit)
+        return XrefsFromResult(**page, skipped_non_memory=skipped)
 
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"xrefs"})
     @session.require_open
