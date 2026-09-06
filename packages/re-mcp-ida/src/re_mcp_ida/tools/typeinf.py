@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 import ida_nalt
 import ida_typeinf
 from fastmcp import FastMCP
@@ -22,6 +24,7 @@ from re_mcp_ida.helpers import (
     Offset,
     async_paginate_iter,
     format_address,
+    ida_dispatch,
     is_cancelled,
     resolve_address,
     safe_type_size,
@@ -105,6 +108,251 @@ class ApplyTypeResult(BaseModel):
     address: str = Field(description="Target address (hex).")
     old_type: str = Field(description="Previous type.")
     type_name: str = Field(description="Applied type name.")
+
+
+# ---------------------------------------------------------------------------
+# Declaration diagnostics (#32)
+#
+# Under idalib ``parse_decls`` only returns an error *count*: its ``printer``
+# argument must be a C++ ``printer_t`` and nothing reaches the message window,
+# so the parser's own diagnostics are unobtainable.  These checks run on the
+# failed text only and produce the reason ourselves.
+# ---------------------------------------------------------------------------
+
+_C_KEYWORDS = frozenset(
+    [
+        "auto",
+        "break",
+        "case",
+        "const",
+        "continue",
+        "default",
+        "do",
+        "else",
+        "enum",
+        "extern",
+        "for",
+        "goto",
+        "if",
+        "inline",
+        "register",
+        "restrict",
+        "return",
+        "sizeof",
+        "static",
+        "struct",
+        "switch",
+        "typedef",
+        "union",
+        "volatile",
+        "while",
+        "_Bool",
+        "_Complex",
+        "_Imaginary",
+    ]
+)
+_BASIC_TYPES = frozenset(
+    [
+        "int",
+        "char",
+        "short",
+        "long",
+        "unsigned",
+        "signed",
+        "void",
+        "float",
+        "double",
+        "bool",
+        "wchar_t",
+        "size_t",
+        "ssize_t",
+        "_BOOL1",
+        "_BOOL2",
+        "_BOOL4",
+        "_BOOL8",
+        "__int8",
+        "__int16",
+        "__int32",
+        "__int64",
+        "__int128",
+        "_BYTE",
+        "_WORD",
+        "_DWORD",
+        "_QWORD",
+        "_OWORD",
+        "_TBYTE",
+        "_UNKNOWN",
+    ]
+)
+_IDA_MODIFIERS = frozenset(
+    [
+        "__cdecl",
+        "__stdcall",
+        "__fastcall",
+        "__thiscall",
+        "__pascal",
+        "__usercall",
+        "__userpurge",
+        "__vectorcall",
+        "__noreturn",
+        "__pure",
+        "__hidden",
+        "__return_ptr",
+        "__struct_ptr",
+        "__array_ptr",
+        "__unaligned",
+        "__ptr32",
+        "__ptr64",
+        "__far",
+        "__near",
+        "__shifted",
+        "__spoils",
+        "__high",
+        "__attribute__",
+        "__declspec",
+    ]
+)
+_SKIP_IDENTS = _C_KEYWORDS | _BASIC_TYPES | _IDA_MODIFIERS
+_BRACKETS = (("{", "}"), ("(", ")"), ("[", "]"))
+_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
+_COMMENT_RE = re.compile(r"//[^\n]*|/\*.*?\*/", re.DOTALL)
+_DEFINED_RE = re.compile(r"\b(?:struct|union|enum)\s+([A-Za-z_]\w*)")
+_SEGMENT_RE = re.compile(r"([^;{}]*)([;{}]|$)")
+_ARRAY_RE = re.compile(r"\[[^\]]*\]")
+_BITFIELD_RE = re.compile(r":\s*\d+")
+_TYPE_DECL_RE = re.compile(r"(struct|union|enum|typedef)\b")
+
+
+def _strip_comments(text: str) -> str:
+    return _COMMENT_RE.sub(" ", text)
+
+
+def _type_position_idents(piece: str, *, after_close_brace: bool) -> list[str]:
+    """Identifiers of *piece* that sit in type position.
+
+    A piece is one ``<type tokens> <name>`` declarator: the last identifier
+    is the declared name (member, parameter, typedef alias) unless there is
+    only one, in which case it is an unnamed parameter's type.  Anything
+    following ``}`` (``} alias;``) is a name, never a type, and so is a
+    ``*name`` declarator inside ``(*name)``.
+    """
+    if after_close_brace or piece.lstrip().startswith("*"):
+        return []
+    piece = _ARRAY_RE.sub(" ", piece)
+    piece = _BITFIELD_RE.sub(" ", piece)
+    idents = _IDENT_RE.findall(piece)
+    if len(idents) >= 2:
+        idents = idents[:-1]
+    return [i for i in idents if i not in _SKIP_IDENTS]
+
+
+def diagnose_declaration(declaration: str, til) -> list[str]:
+    """Explain why *declaration* failed to parse, as far as we can tell.
+
+    Returns human-readable findings in check order: bracket balance,
+    missing trailing ``;`` on type declarations, and identifiers in type
+    position that the local type library does not know.  An empty list
+    means none of these checks found anything.
+    """
+    text = _strip_comments(declaration)
+    diags: list[str] = []
+
+    for opener, closer in _BRACKETS:
+        opens, closes = text.count(opener), text.count(closer)
+        if opens != closes:
+            diags.append(f"unbalanced {opener!r} ({opens} open, {closes} close)")
+
+    stripped = text.strip()
+    if _TYPE_DECL_RE.match(stripped):
+        # A struct/union/enum body must be closed by ``};`` (or ``} alias;``);
+        # a member's own ``;`` does not count.
+        never_closed = "{" in stripped and "}" not in stripped
+        ending = "" if never_closed else stripped.rsplit("}", 1)[-1]
+        if not ending.rstrip().endswith(";"):
+            diags.append("declaration does not end with ';'")
+
+    defined = set(_DEFINED_RE.findall(text))
+    # Segments are separated by ; { } .  The piece right before ``{`` is a
+    # struct/union/enum header whose tag is a definition, not a use.
+    candidates: list[str] = []
+    prev_delim = ""
+    for segment, delim in _SEGMENT_RE.findall(text):
+        if delim != "{":
+            after_close_brace = prev_delim == "}"
+            for piece in re.split(r"[(),]", segment):
+                candidates.extend(_type_position_idents(piece, after_close_brace=after_close_brace))
+                after_close_brace = False
+        prev_delim = delim
+    seen: set[str] = set()
+    for name in candidates:
+        if name in seen or name in defined:
+            continue
+        seen.add(name)
+        if not ida_typeinf.tinfo_t().get_named_type(til, name):
+            diags.append(f"unknown type {name!r}")
+
+    return diags
+
+
+@ida_dispatch
+def parse_declaration(declaration: str) -> ParsedTypeResult:
+    """Parse *declaration* into the local type library (see ``parse_type_declaration``)."""
+    til = ida_typeinf.get_idati()
+
+    # parse_decls saves named types (structs, enums, typedefs) to the TIL.
+    # It returns the number of errors (0 = success).
+    count_before = ida_typeinf.get_ordinal_count(til)
+    num_errors = ida_typeinf.parse_decls(til, declaration, None, ida_typeinf.HTI_DCL)
+    if num_errors:
+        # Fall back: try parse_decl for anonymous/simple type expressions
+        tinfo = ida_typeinf.tinfo_t()
+        result = ida_typeinf.parse_decl(tinfo, til, declaration, ida_typeinf.PT_TYP)
+        if result is None:
+            diags = diagnose_declaration(declaration, til) or [
+                f"IDA reported {num_errors} error(s) but exposes no diagnostics under idalib"
+            ]
+            raise IDAError(
+                f"Failed to parse declaration ({num_errors} error(s)): " + "; ".join(diags),
+                error_type="ParseError",
+            )
+        return ParsedTypeResult(
+            declaration=str(tinfo),
+            size=safe_type_size(tinfo.get_size()),
+            saved=False,
+            message="Anonymous type parsed but not saved to local types",
+        )
+
+    # Find any newly added named types
+    count_after = ida_typeinf.get_ordinal_count(til)
+    new_types = []
+    for ordinal in range(count_before + 1, count_after + 1):
+        name = ida_typeinf.get_numbered_type_name(til, ordinal)
+        if name:
+            tinfo = ida_typeinf.tinfo_t()
+            tinfo.get_numbered_type(til, ordinal)
+            new_types.append(
+                {
+                    "name": name,
+                    "ordinal": ordinal,
+                    "declaration": str(tinfo),
+                    "size": safe_type_size(tinfo.get_size()),
+                }
+            )
+
+    if len(new_types) == 1:
+        return ParsedTypeResult(**new_types[0], saved=True)
+    if new_types:
+        return ParsedTypeResult(saved=True, types=new_types)
+
+    # No new ordinals — type may have been merged with existing
+    tinfo = ida_typeinf.tinfo_t()
+    ida_typeinf.parse_decl(tinfo, til, declaration, ida_typeinf.PT_TYP)
+    return ParsedTypeResult(
+        declaration=str(tinfo),
+        size=safe_type_size(tinfo.get_size()),
+        saved=True,
+        message="Parsed and saved (type may have merged with existing)",
+    )
 
 
 def register(mcp: FastMCP):
@@ -221,56 +469,7 @@ def register(mcp: FastMCP):
         Args:
             declaration: C type declaration (e.g. "struct foo { int x; char y; };").
         """
-        til = ida_typeinf.get_idati()
-
-        # parse_decls saves named types (structs, enums, typedefs) to the TIL.
-        # It returns the number of errors (0 = success).
-        count_before = ida_typeinf.get_ordinal_count(til)
-        num_errors = ida_typeinf.parse_decls(til, declaration, None, ida_typeinf.HTI_DCL)
-        if num_errors:
-            # Fall back: try parse_decl for anonymous/simple type expressions
-            tinfo = ida_typeinf.tinfo_t()
-            result = ida_typeinf.parse_decl(tinfo, til, declaration, ida_typeinf.PT_TYP)
-            if result is None:
-                raise IDAError("Failed to parse declaration", error_type="ParseError")
-            return ParsedTypeResult(
-                declaration=str(tinfo),
-                size=safe_type_size(tinfo.get_size()),
-                saved=False,
-                message="Anonymous type parsed but not saved to local types",
-            )
-
-        # Find any newly added named types
-        count_after = ida_typeinf.get_ordinal_count(til)
-        new_types = []
-        for ordinal in range(count_before + 1, count_after + 1):
-            name = ida_typeinf.get_numbered_type_name(til, ordinal)
-            if name:
-                tinfo = ida_typeinf.tinfo_t()
-                tinfo.get_numbered_type(til, ordinal)
-                new_types.append(
-                    {
-                        "name": name,
-                        "ordinal": ordinal,
-                        "declaration": str(tinfo),
-                        "size": safe_type_size(tinfo.get_size()),
-                    }
-                )
-
-        if len(new_types) == 1:
-            return ParsedTypeResult(**new_types[0], saved=True)
-        if new_types:
-            return ParsedTypeResult(saved=True, types=new_types)
-
-        # No new ordinals — type may have been merged with existing
-        tinfo = ida_typeinf.tinfo_t()
-        ida_typeinf.parse_decl(tinfo, til, declaration, ida_typeinf.PT_TYP)
-        return ParsedTypeResult(
-            declaration=str(tinfo),
-            size=safe_type_size(tinfo.get_size()),
-            saved=True,
-            message="Parsed and saved (type may have merged with existing)",
-        )
+        return parse_declaration(declaration)
 
     @mcp.tool(
         annotations=ANNO_DESTRUCTIVE,
