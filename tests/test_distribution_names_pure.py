@@ -24,7 +24,12 @@ import re_mcp
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = REPO_ROOT / "packages"
 
-EXPECTED_VERSION = "1.0.0"
+# The fork version is read from the root pyproject; the packages must all carry
+# the same one, a plain PEP 440 release at or above the first fork release.
+ROOT_VERSION = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+    "version"
+]
+FIRST_FORK_VERSION = (1, 0, 0)
 
 # directory (unchanged) -> distribution name
 DISTRIBUTIONS: dict[Path, str] = {
@@ -79,7 +84,9 @@ def _dependency_strings(data: dict) -> list[str]:
 def test_distribution_name_and_version(directory: Path, name: str) -> None:
     project = _load(directory)["project"]
     assert project["name"] == name
-    assert project["version"] == EXPECTED_VERSION
+    assert project["version"] == ROOT_VERSION
+    parts = tuple(int(x) for x in project["version"].split("."))
+    assert len(parts) == 3 and parts >= FIRST_FORK_VERSION
 
 
 @pytest.mark.parametrize("package", ["re-mcp-ida", "re-mcp-ghidra"])
@@ -146,3 +153,19 @@ def test_project_urls_point_at_fork(package: str) -> None:
 def test_readme_title(readme: Path, title: str) -> None:
     first_line = readme.read_text(encoding="utf-8").splitlines()[0]
     assert first_line == title
+
+
+def test_readme_wheel_names_follow_the_version() -> None:
+    """The install examples name concrete wheel files; they must match the release version."""
+    for readme in (
+        REPO_ROOT / "README.md",
+        PACKAGES / "re-mcp-ida" / "README.md",
+        PACKAGES / "re-mcp-ghidra" / "README.md",
+    ):
+        versions = set(
+            re.findall(
+                r"eo_re_mcp(?:_core|_ida|_ghidra)?-(\d+\.\d+\.\d+)-py3-none-any\.whl",
+                readme.read_text(encoding="utf-8"),
+            )
+        )
+        assert versions == {ROOT_VERSION}, (readme, versions)
