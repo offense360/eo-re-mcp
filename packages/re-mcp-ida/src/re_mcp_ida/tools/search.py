@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import Annotated
 
 import ida_bytes
@@ -38,6 +38,7 @@ from re_mcp_ida.helpers import (
     get_func_name,
     is_bad_addr,
     is_cancelled,
+    paginate,
     resolve_address,
 )
 from re_mcp_ida.models import PaginatedResult
@@ -125,22 +126,29 @@ class FindImmediateResult(BaseModel):
 
 
 class StringCodeRef(BaseModel):
-    """A string and the function that references it."""
+    """A string, the instruction that references it, and the enclosing function."""
 
     string_address: str = Field(description="Address of the string (hex).")
     string_value: str = Field(description="The string value.")
-    function_address: str = Field(description="Address of the referencing function (hex).")
-    function_name: str = Field(description="Name of the referencing function.")
-
-
-class FindCodeByStringResult(BaseModel):
-    """Result of finding code that references matching strings."""
-
-    results: list[StringCodeRef] = Field(description="String-to-function references found.")
-    total_strings_scanned: int = Field(
-        description="Number of matching strings scanned (may be less than total in binary)."
+    code_address: str = Field(
+        description=(
+            "Address of the instruction that references the string (hex); "
+            "pass it to get_xrefs_from / set_comment."
+        )
     )
-    unique_functions: int = Field(description="Unique functions in the returned results.")
+    function_name: str = Field(description="Name of the referencing function.")
+    function_address: str = Field(description="Address of the referencing function (hex).")
+
+
+class FindCodeByStringResult(PaginatedResult[StringCodeRef]):
+    """Paginated string-to-code references (same envelope as Ghidra)."""
+
+    total_strings_scanned: int = Field(
+        description="Matching strings scanned over the whole database."
+    )
+    unique_functions: int = Field(
+        description="Distinct functions across all matches, not just this page."
+    )
 
 
 class RebuildStringListResult(BaseModel):
@@ -178,6 +186,49 @@ def _iter_strings(min_length: int = 4, pattern: re.Pattern | None = None) -> Ite
             "length": si.length,
             "type": si.type,
         }
+
+
+def collect_string_refs(strings: Iterable[dict]) -> tuple[list[dict], int]:
+    """Walk every xref to every string in *strings* (from :func:`_iter_strings`).
+
+    Returns ``(refs, strings_scanned)``: one ``StringCodeRef`` dict per
+    referencing instruction that lies inside a function (``code_address`` is
+    ``xref.frm``), and the number of strings scanned.  References outside
+    any function are dropped.  Must run on the IDA thread.
+    """
+    refs: list[dict] = []
+    strings_scanned = 0
+    for s in strings:
+        if is_cancelled():
+            break
+        strings_scanned += 1
+        for xref in idautils.XrefsTo(s["ea"]):
+            if is_cancelled():
+                break
+            func = ida_funcs.get_func(xref.frm)
+            if func is None:
+                continue
+            refs.append(
+                {
+                    "string_address": s["address"],
+                    "string_value": s["value"],
+                    "code_address": format_address(xref.frm),
+                    "function_name": get_func_name(func.start_ea),
+                    "function_address": format_address(func.start_ea),
+                }
+            )
+    return refs, strings_scanned
+
+
+def build_find_code_result(
+    refs: list[dict], strings_scanned: int, offset: int, limit: int
+) -> FindCodeByStringResult:
+    """Page *refs* with core ``paginate``; the extra counters cover all of *refs*."""
+    return FindCodeByStringResult(
+        **paginate(refs, offset, limit),
+        total_strings_scanned=strings_scanned,
+        unique_functions=len({r["function_address"] for r in refs}),
+    )
 
 
 def _batch_strings(filters: list[StringFilter]) -> BatchStringsResult:
@@ -406,9 +457,13 @@ def register(mcp: FastMCP):
         """Find functions that xref a string matching a regex (string → caller lookup).
 
         Combines get_strings + get_xrefs_to + function resolution into a
-        single call.  Returns a list of (string, function) pairs —
-        does NOT auto-decompile.  Use the returned function addresses
-        with decompile_function to inspect the code.
+        single call.  Returns the same paginated envelope as Ghidra
+        (`items`/`total`/`has_more`); each item carries `code_address`, the
+        referencing instruction, plus the enclosing function.  Does NOT
+        auto-decompile — use the function addresses with decompile_function
+        to inspect the code.  The whole database is scanned on every call,
+        so `total`, `total_strings_scanned` and `unique_functions` describe
+        all matches, not just this page.
 
         Uses IDA's cached string list (built during analyze_database).
         If you patch bytes or define new data, call rebuild_string_list
@@ -418,49 +473,14 @@ def register(mcp: FastMCP):
             pattern: Regex pattern to match string values.
             min_length: Minimum string length.
             offset: Number of results to skip (for pagination).
-            limit: Maximum number of string-to-function refs to return.
+            limit: Maximum number of string-to-code refs to return.
         """
         compiled = compile_filter(pattern)
         if compiled is None:
             raise IDAError("pattern is required", error_type="InvalidArgument")
 
-        results: list[StringCodeRef] = []
-        strings_scanned = 0
-        seen_funcs: set[int] = set()
-        skipped = 0
-
-        for s in _iter_strings(min_length, compiled):
-            if is_cancelled():
-                break
-            strings_scanned += 1
-            for xref in idautils.XrefsTo(s["ea"]):
-                if is_cancelled():
-                    break
-                func = ida_funcs.get_func(xref.frm)
-                if func is None:
-                    continue
-                if skipped < offset:
-                    skipped += 1
-                    continue
-                seen_funcs.add(func.start_ea)
-                results.append(
-                    StringCodeRef(
-                        string_address=s["address"],
-                        string_value=s["value"],
-                        function_address=format_address(func.start_ea),
-                        function_name=get_func_name(func.start_ea),
-                    )
-                )
-                if len(results) >= limit:
-                    break
-            if len(results) >= limit:
-                break
-
-        return FindCodeByStringResult(
-            results=results,
-            total_strings_scanned=strings_scanned,
-            unique_functions=len(seen_funcs),
-        )
+        refs, strings_scanned = collect_string_refs(_iter_strings(min_length, compiled))
+        return build_find_code_result(refs, strings_scanned, offset, limit)
 
     @mcp.tool(
         annotations=ANNO_READ_ONLY,
