@@ -284,7 +284,7 @@ Type query and application.
 | Tool | Description |
 |------|-------------|
 | `get_type_info` | Get the type applied at an address. |
-| `set_type` | Apply a C type declaration at an address. |
+| `set_type` | Apply a C type declaration at an address (a function prototype at a function entry is rejected with a pointer to `set_function_type`). |
 
 ## Type Information
 

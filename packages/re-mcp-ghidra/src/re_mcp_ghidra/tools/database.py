@@ -152,6 +152,18 @@ def entry_points(sym_table: Any) -> list[tuple[Any, str]]:
     return out
 
 
+def entry_point_address(eps: list[tuple[Any, str]]) -> str | None:
+    """Hex address of the first entry point in *eps*, ``None`` when there is none (#38).
+
+    IDA's ``get_database_info`` reports ``inf_get_start_ea()`` as ``entry_point``;
+    the Ghidra equivalent is the first address ``entry_points()`` yields (the PE
+    ``entry`` symbol, the ELF ``entry`` before ``_DT_INIT``/``_DT_FINI``).
+    """
+    if not eps:
+        return None
+    return format_address(eps[0][0].getOffset())
+
+
 def database_info_paths(session_path: str | None, importer_path: str | None) -> tuple[str, str]:
     """Return ``(file_path, executable_path)`` for ``get_database_info``.
 
@@ -239,6 +251,14 @@ class DatabaseInfoResult(BaseModel):
             "describes the program's extent."
         )
     )
+    entry_point: str | None = Field(
+        default=None,
+        description=(
+            "Program entry point (hex): the first entry point address Ghidra "
+            "records (same address IDA reports as entry_point); null when the "
+            "loader marked none."
+        ),
+    )
     image_base: str = Field(description="Image base address (hex).")
     function_count: int = Field(description="Number of functions.")
     external_function_count: int = Field(
@@ -325,7 +345,7 @@ def register(mcp: FastMCP) -> None:
         min_addr, max_addr = loaded_memory_bounds(mem, default_space)
         internal_funcs, external_funcs = count_functions(func_mgr)
 
-        entry_count = len(entry_points(sym_table))
+        eps = entry_points(sym_table)
 
         # The session path is the OS path the caller opened; the importer's is
         # normalised ("/C:/..." on Windows) and is reported separately (#31).
@@ -343,11 +363,12 @@ def register(mcp: FastMCP) -> None:
             endian="big" if lang.isBigEndian() else "little",
             min_address=format_address(min_addr.getOffset()) if min_addr else "0x0",
             max_address=format_address(max_addr.getOffset()) if max_addr else "0x0",
+            entry_point=entry_point_address(eps),
             image_base=format_address(program.getImageBase().getOffset()),
             function_count=internal_funcs,
             external_function_count=external_funcs,
             segment_count=len(blocks),
-            entry_point_count=entry_count,
+            entry_point_count=len(eps),
             capabilities=session.capabilities,
         )
 

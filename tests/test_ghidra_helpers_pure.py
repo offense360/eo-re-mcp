@@ -19,6 +19,7 @@ import pytest
 from re_mcp_ghidra.exceptions import GhidraError
 from re_mcp_ghidra.helpers import (
     check_range_in_memory,
+    clean_parser_message,
     normalize_pseudocode,
     to_ghidra_address,
     transaction,
@@ -465,3 +466,48 @@ class TestPseudocodeToolsUseNormalize:
         path = _GHIDRA_TOOLS / "export.py"
         assert _calls_normalize(_tool_body(path, "export_all_pseudocode"))
         assert _getc_calls_outside_normalize(path) == []
+
+
+# ---------------------------------------------------------------------------
+# clean_parser_message (#47)
+# ---------------------------------------------------------------------------
+
+# Verbatim str(e) of the CParser failure for ``struct broken { int a; `` on
+# Ghidra 12.1.2 / Windows: Java class prefix, CR LF, a duplicated expectation
+# line and trailing whitespace.
+_RAW_PARSE_ERROR = (
+    "ghidra.app.util.cparser.C.ParseException: "
+    'Encountered "<EOF>" at line 1, column 23.' + "\r\n"
+    "Was expecting one of:" + "\r\n"
+    '    "}" ...' + "\r\n"
+    '    "}" ...' + "\r\n"
+    "    "
+)
+
+
+class TestCleanParserMessage:
+    def test_measured_cparser_message_becomes_one_line(self):
+        assert (
+            clean_parser_message(_RAW_PARSE_ERROR)
+            == 'Encountered "<EOF>" at line 1, column 23. Was expecting one of: "}" ...'
+        )
+
+    def test_message_without_a_java_prefix_is_unchanged(self):
+        assert clean_parser_message("Unknown type: foo_t") == "Unknown type: foo_t"
+
+    def test_lf_only_lines_are_joined_with_single_spaces(self):
+        assert clean_parser_message("first line\n  second line\n\nthird") == (
+            "first line second line third"
+        )
+
+    def test_empty_string_stays_empty(self):
+        assert clean_parser_message("") == ""
+
+    def test_parse_type_declaration_uses_it(self):
+        fn = _tool_body(_GHIDRA_TOOLS / "types.py", "parse_type_declaration")
+        assert any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id == "clean_parser_message"
+            for n in ast.walk(fn)
+        )

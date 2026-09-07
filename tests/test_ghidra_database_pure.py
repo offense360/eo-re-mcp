@@ -22,6 +22,7 @@ from re_mcp_ghidra.tools.database import (
     OpenDatabaseResult,
     count_functions,
     database_info_paths,
+    entry_point_address,
     entry_points,
     loaded_memory_bounds,
 )
@@ -732,3 +733,36 @@ class TestEveryEntryPointConsumerUsesTheHelper:
         assert len(rows) == 1
         assert "one item per entry point address" in rows[0].lower()
         assert "primary symbol" in rows[0]
+
+
+# ---------------------------------------------------------------------------
+# entry_point (#38): the first entry point address, the way IDA reports it
+# ---------------------------------------------------------------------------
+
+
+class TestEntryPointAddress:
+    def test_pe_reports_its_single_entry(self):
+        st = FakeSymbolTable([(FakeAddr(0x1400049F0), ["entry"])])
+        assert entry_point_address(entry_points(st)) == "0x1400049F0"
+
+    def test_elf_reports_the_first_iterator_entry(self):
+        assert entry_point_address(entry_points(FakeSymbolTable(ELF_ENTRIES))) == "0x10E3A0"
+
+    def test_no_entry_points_gives_none(self):
+        assert entry_point_address(entry_points(FakeSymbolTable([]))) is None
+
+    def test_field_sits_after_max_address_and_is_optional(self):
+        names = list(DatabaseInfoResult.model_fields)
+        assert names.index("entry_point") == names.index("max_address") + 1
+        field = DatabaseInfoResult.model_fields["entry_point"]
+        desc = field.description or ""
+        assert "first entry point" in desc
+        assert "IDA" in desc
+        assert "null" in desc
+
+    def test_get_database_info_derives_both_fields_from_one_lookup(self):
+        source = DATABASE_PY.read_text(encoding="utf-8")
+        body = _between(source, "def get_database_info(", "def save_database(")
+        assert body.count("entry_points(") == 1
+        assert "entry_point_address(" in body
+        assert "entry_point=" in body

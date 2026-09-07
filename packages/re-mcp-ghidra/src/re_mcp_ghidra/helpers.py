@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 from typing import Annotated, Any
 
 from pydantic import Field
@@ -55,6 +56,7 @@ __all__ = [
     "async_paginate_iter",
     "call_ghidra",
     "check_range_in_memory",
+    "clean_parser_message",
     "compile_filter",
     "describe_external",
     "disassembly_note",
@@ -407,6 +409,26 @@ def normalize_pseudocode(code: str) -> str:
     appear inside string literals in the decompiled code.
     """
     return code.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+
+
+_JAVA_EXCEPTION_PREFIX = re.compile(r"^\s*(?:[\w$]+\.)*\w*(?:Exception|Error):\s*")
+
+
+def clean_parser_message(text: str) -> str:
+    """One-line, LF-free version of a Ghidra parser exception message (#47).
+
+    Drops the Java exception class prefix (``...ParseException: ``), normalises
+    CR LF to LF, trims each line, drops empty and duplicate consecutive lines,
+    and joins the rest with single spaces.
+    """
+    text = _JAVA_EXCEPTION_PREFIX.sub("", text, count=1)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines: list[str] = []
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line and (not lines or lines[-1] != line):
+            lines.append(line)
+    return " ".join(lines)
 
 
 # ---------------------------------------------------------------------------
