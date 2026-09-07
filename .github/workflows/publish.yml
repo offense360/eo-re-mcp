@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        package: [re-mcp-core, re-mcp-ida, ida-mcp, re-mcp-ghidra, re-mcp]
+        package: [re-mcp-core, re-mcp-ida, re-mcp-ghidra, re-mcp]
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v6
@@ -56,21 +56,6 @@ jobs:
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
 
-  publish-ida-mcp:
-    needs: publish-re-mcp-ida
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/ida-mcp
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist-ida-mcp
-          path: dist/
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
   publish-re-mcp-ghidra:
     needs: publish-core
     runs-on: ubuntu-latest
@@ -87,7 +72,7 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   publish-re-mcp:
-    needs: [publish-re-mcp-ida, publish-ida-mcp, publish-re-mcp-ghidra]
+    needs: [publish-re-mcp-ida, publish-re-mcp-ghidra]
     runs-on: ubuntu-latest
     environment:
       name: pypi

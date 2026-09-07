@@ -2,12 +2,12 @@
 
 ## Overview
 
-RE-MCP is a multi-backend reverse-engineering server that communicates over the Model Context Protocol (MCP). It uses headless APIs — [idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library) for IDA Pro, [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) for Ghidra — to expose binary analysis capabilities as structured tool calls that LLMs can invoke.
+eo-re-mcp is a multi-backend reverse-engineering server that communicates over the Model Context Protocol (MCP). It uses headless APIs — [idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library) for IDA Pro, [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) for Ghidra — to expose binary analysis capabilities as structured tool calls that LLMs can invoke.
 
 The project is a monorepo with three packages:
-- **`re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`) — generic MCP supervisor infrastructure (transport, worker management, tool transforms, sandboxed execution)
-- **`re-mcp-ida`** (`packages/re-mcp-ida/src/re_mcp_ida/`) — IDA-specific backend (idalib bootstrap, tools, resources, prompts)
-- **`re-mcp-ghidra`** (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`) — Ghidra-specific backend (pyghidra bootstrap, tools, resources, prompts)
+- **`eo-re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`) — generic MCP supervisor infrastructure (transport, worker management, tool transforms, sandboxed execution)
+- **`eo-re-mcp-ida`** (`packages/re-mcp-ida/src/re_mcp_ida/`) — IDA-specific backend (idalib bootstrap, tools, resources, prompts)
+- **`eo-re-mcp-ghidra`** (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`) — Ghidra-specific backend (pyghidra bootstrap, tools, resources, prompts)
 
 The server supports three transport modes:
 
@@ -295,7 +295,7 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 
 ## Module Organization
 
-### `re-mcp-core` modules (`packages/re-mcp-core/src/re_mcp/`)
+### `eo-re-mcp-core` modules (`packages/re-mcp-core/src/re_mcp/`)
 
 | Module | Role |
 |--------|------|
@@ -314,7 +314,7 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 | `_process.py` | Platform-aware process utilities (`pid_alive`, `pid_exit_code`, `IS_WINDOWS`) — stdlib only, no backend dependencies |
 | `__init__.py` | `configure_logging()`, `ensure_run_id()`, `resolve_log_file()`, `get_version()` — shared infrastructure utilities |
 
-### `re-mcp-ida` modules (`packages/re-mcp-ida/src/re_mcp_ida/`)
+### `eo-re-mcp-ida` modules (`packages/re-mcp-ida/src/re_mcp_ida/`)
 
 | Module | Role |
 |--------|------|
@@ -328,9 +328,9 @@ The default limit is 100 for most tools. Some tools use smaller defaults: 50 for
 | `resources.py` | MCP resources — read-only, cacheable context endpoints (static binary data + aggregate statistics) |
 | `prompts/` | MCP prompt templates for guided analysis workflows (analysis, security, workflow) |
 | `__init__.py` | Lazy `bootstrap()` to initialize idapro, plus `find_ida_dir()` for IDA installation discovery |
-| `_cli.py` | Convenience CLI entry point — `re-mcp-ida` is equivalent to `re-mcp --backend ida` (the `ida-mcp` alias package also points here) |
+| `_cli.py` | Convenience CLI entry point — `re-mcp-ida` is equivalent to `re-mcp --backend ida` |
 
-### `re-mcp-ghidra` modules (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`)
+### `eo-re-mcp-ghidra` modules (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`)
 
 | Module | Role |
 |--------|------|

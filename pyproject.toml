@@ -1,7 +1,7 @@
 [project]
-name = "re-mcp"
-version = "3.1.0"
-description = "Multi-backend reverse-engineering MCP server"
+name = "eo-re-mcp"
+version = "1.0.0"
+description = "eo-re-mcp: multi-backend reverse-engineering MCP server (fork of re-mcp)"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 license-files = ["LICENSE", "LICENSES/*"]
@@ -10,10 +10,16 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "re-mcp-core",
-    "re-mcp-ida",
-    "re-mcp-ghidra",
+    "eo-re-mcp-core",
+    "eo-re-mcp-ida",
+    "eo-re-mcp-ghidra",
 ]
+
+[project.urls]
+Homepage = "https://github.com/offense360/eo-re-mcp"
+Repository = "https://github.com/offense360/eo-re-mcp"
+Issues = "https://github.com/offense360/eo-re-mcp/issues"
+Documentation = "https://github.com/offense360/eo-re-mcp/tree/main/docs"
 
 [build-system]
 requires = ["setuptools>=75"]
@@ -27,21 +33,18 @@ members = [
     "packages/re-mcp-core",
     "packages/re-mcp-ida",
     "packages/re-mcp-ghidra",
-    "packages/ida-mcp",
 ]
 
 [tool.uv.sources]
-re-mcp-core = { workspace = true }
-re-mcp-ida = { workspace = true }
-re-mcp-ghidra = { workspace = true }
-ida-mcp = { workspace = true }
+eo-re-mcp-core = { workspace = true }
+eo-re-mcp-ida = { workspace = true }
+eo-re-mcp-ghidra = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "re-mcp-core",
-    "re-mcp-ida",
-    "re-mcp-ghidra",
-    "ida-mcp",
+    "eo-re-mcp-core",
+    "eo-re-mcp-ida",
+    "eo-re-mcp-ghidra",
     "jsonschema>=4.20,<5",
     "pre-commit>=4.5,<5",
     "pytest>=9.0,<10",

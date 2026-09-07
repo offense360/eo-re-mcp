@@ -1,7 +1,7 @@
 [project]
-name = "re-mcp-ida"
-version = "3.1.0"
-description = "IDA Pro backend for re-mcp — headless IDA Pro MCP server using idalib"
+name = "eo-re-mcp-ida"
+version = "1.0.0"
+description = "IDA Pro backend for eo-re-mcp — headless IDA Pro MCP server using idalib"
 license = "MIT OR Apache-2.0"
 authors = [
     { name = "Joe T. Sylve, Ph.D.", email = "joe.sylve@gmail.com" }
@@ -18,14 +18,14 @@ classifiers = [
 ]
 readme = "README.md"
 dependencies = [
-    "re-mcp-core>=0.1.0",
+    "eo-re-mcp-core>=1.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/jtsylve/ida-mcp"
-Repository = "https://github.com/jtsylve/ida-mcp"
-Issues = "https://github.com/jtsylve/ida-mcp/issues"
-Documentation = "https://github.com/jtsylve/ida-mcp/tree/main/docs"
+Homepage = "https://github.com/offense360/eo-re-mcp"
+Repository = "https://github.com/offense360/eo-re-mcp"
+Issues = "https://github.com/offense360/eo-re-mcp/issues"
+Documentation = "https://github.com/offense360/eo-re-mcp/tree/main/docs"
 
 [project.scripts]
 re-mcp-ida = "re_mcp_ida._cli:main"

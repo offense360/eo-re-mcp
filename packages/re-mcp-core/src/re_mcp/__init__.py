@@ -142,7 +142,7 @@ def configure_logging(*, label: str = "", env_prefix: str | None = None) -> None
             root.addHandler(handler)
 
 
-def get_version(package: str = "re-mcp-core") -> str:
+def get_version(package: str = "eo-re-mcp-core") -> str:
     """Return the installed package version, or ``"unknown"`` if unavailable."""
     from importlib.metadata import version as pkg_version  # noqa: PLC0415
 
