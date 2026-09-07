@@ -163,3 +163,78 @@ def test_enum_member_type_in_struct_is_still_checked(typeinf_mod):
     diags = typeinf_mod.diagnose_declaration("struct S { enum E e; foo_t f; };", TIL)
 
     assert diags == ["unknown type 'foo_t'"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #46 — a failed parse discards the types IDA registered before the error
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def failed_parse(typeinf_mod):
+    """``parse_decls`` reports one error and the ``parse_decl`` fallback fails."""
+    ida_typeinf.parse_decls.return_value = 1
+    ida_typeinf.parse_decl.return_value = None
+    ida_typeinf.get_ordinal_count.reset_mock(return_value=True, side_effect=True)
+    ida_typeinf.get_numbered_type_name.reset_mock(return_value=True, side_effect=True)
+    ida_typeinf.del_numbered_type.reset_mock(return_value=True, side_effect=True)
+    ida_typeinf.del_numbered_type.return_value = True
+    return typeinf_mod
+
+
+def test_failed_parse_deletes_the_ordinal_ida_registered(failed_parse):
+    ida_typeinf.get_ordinal_count.side_effect = [63, 64]
+    ida_typeinf.get_numbered_type_name.return_value = "E46"
+
+    with pytest.raises(IDAError) as ei:
+        failed_parse.parse_declaration("enum E46 { A46 = 1, B46 }")
+
+    ida_typeinf.del_numbered_type.assert_called_once_with(TIL, 64)
+    assert ei.value.error_type == "ParseError"
+    msg = ei.value.args[0]
+    assert msg.startswith("Failed to parse declaration (1 error(s)): ")
+    assert msg.endswith("; discarded partially registered type(s): E46")
+
+
+def test_failed_parse_without_new_ordinals_deletes_nothing(failed_parse):
+    ida_typeinf.get_ordinal_count.side_effect = [63, 63]
+
+    with pytest.raises(IDAError) as ei:
+        failed_parse.parse_declaration("struct S46b { nosuchtype_t a; };")
+
+    ida_typeinf.del_numbered_type.assert_not_called()
+    assert "discarded" not in ei.value.args[0]
+
+
+def test_failed_parse_reports_an_ordinal_it_could_not_delete(failed_parse):
+    ida_typeinf.get_ordinal_count.side_effect = [63, 64]
+    ida_typeinf.get_numbered_type_name.return_value = "E46"
+    ida_typeinf.del_numbered_type.return_value = False
+
+    with pytest.raises(IDAError) as ei:
+        failed_parse.parse_declaration("enum E46 { A46 = 1, B46 }")
+
+    ida_typeinf.del_numbered_type.assert_called_once_with(TIL, 64)
+    assert ei.value.args[0].endswith("; discarded partially registered type(s): E46 (not deleted)")
+
+
+def test_successful_parse_never_deletes(failed_parse):
+    ida_typeinf.parse_decls.return_value = 0
+    ida_typeinf.get_ordinal_count.side_effect = [63, 64]
+    ida_typeinf.get_numbered_type_name.return_value = "ok46"
+
+    result = failed_parse.parse_declaration("struct ok46 { int a; };")
+
+    assert result.saved is True
+    assert result.name == "ok46"
+    ida_typeinf.del_numbered_type.assert_not_called()
+
+
+def test_discard_new_ordinals_names_every_new_ordinal(failed_parse):
+    ida_typeinf.get_ordinal_count.return_value = 65
+    ida_typeinf.get_numbered_type_name.side_effect = lambda til, ordinal: {64: "E46"}.get(ordinal)
+
+    discarded = failed_parse.discard_new_ordinals(TIL, 63)
+
+    assert discarded == ["E46", "#65"]
+    assert ida_typeinf.del_numbered_type.call_args_list == [((TIL, 64),), ((TIL, 65),)]

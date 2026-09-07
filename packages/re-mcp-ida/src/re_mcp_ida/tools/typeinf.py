@@ -304,6 +304,26 @@ def diagnose_declaration(declaration: str, til) -> list[str]:
     return diags
 
 
+def discard_new_ordinals(til, count_before: int) -> list[str]:
+    """Delete every ordinal of *til* added after *count_before*; return their names.
+
+    IDA registers a struct/enum whose body is complete *before* it counts a
+    trailing error (a missing ``;``), so a failed ``parse_decls`` can leave the
+    type behind (#46).  Undo cannot be used here: the tool already runs under
+    its own undo point and ``perform_undo`` would consume it.  Unnamed ordinals
+    are reported as ``#<ordinal>``; one that ``del_numbered_type`` refuses to
+    delete is reported as ``<name> (not deleted)``.
+    """
+    count_after = ida_typeinf.get_ordinal_count(til)
+    discarded: list[str] = []
+    for ordinal in range(count_before + 1, count_after + 1):
+        name = ida_typeinf.get_numbered_type_name(til, ordinal) or f"#{ordinal}"
+        if not ida_typeinf.del_numbered_type(til, ordinal):
+            name += " (not deleted)"
+        discarded.append(name)
+    return discarded
+
+
 @ida_dispatch
 def parse_declaration(declaration: str) -> ParsedTypeResult:
     """Parse *declaration* into the local type library (see ``parse_type_declaration``)."""
@@ -321,6 +341,9 @@ def parse_declaration(declaration: str) -> ParsedTypeResult:
             diags = diagnose_declaration(declaration, til) or [
                 f"IDA reported {num_errors} error(s) but exposes no diagnostics under idalib"
             ]
+            discarded = discard_new_ordinals(til, count_before)
+            if discarded:
+                diags.append("discarded partially registered type(s): " + ", ".join(discarded))
             raise IDAError(
                 f"Failed to parse declaration ({num_errors} error(s)): " + "; ".join(diags),
                 error_type="ParseError",
