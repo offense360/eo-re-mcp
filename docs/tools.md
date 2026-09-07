@@ -40,7 +40,7 @@ Core database lifecycle management.
 | `close_database` | Close a database, optionally saving changes. When other sessions are still attached, detaches the current session and keeps the worker alive. Use `force=True` to close regardless of other sessions. If the worker's save or close fails, the response still has `status: closed` (the worker is gone) but includes `close_error` with the worker's error message and, when the worker reported one, `close_error_type` (e.g. `CloseFailed`); treat that as a possible loss of unsaved changes. |
 | `save_database` | Save a database without closing it. Fails if the database is not attached to the current session unless `force=True`. |
 | `list_databases` | List all currently open databases with metadata (file path, processor, bitness, etc.). Includes `opening` and `analyzing` flags for databases that are still loading or being analyzed. |
-| `get_database_info` | Get metadata: file path, processor, bitness, file type, address range, counts. `min_address`/`max_address` cover the loaded image only, and both bounds come from a single address space (the default one unless it holds no qualifying block). Excluded are blocks Ghidra marks *artificial* because a loader or analyzer fabricated them (the PE `tdb` thread-environment block, the ELF `EXTERNAL` import block) and blocks outside a loaded memory space (ELF section headers and other overlay/OTHER blocks); PE headers are real image content and are kept. If that leaves nothing, the bounds fall back to whatever loaded blocks exist, so the field stays meaningful. `function_count` matches `list_functions.total`; external (import thunk) functions are counted separately in `external_function_count` (Ghidra) and are not listed by `list_functions`. `file_path` is the OS path (the same value `open_database` and `list_databases` report); `executable_path` (Ghidra) is the path as the Ghidra importer recorded it (normalised, may start with `/`). |
+| `get_database_info` | Get metadata: file path, processor, bitness, file type, address range, counts. Shared core set on both backends: `entry_point`, `image_base`, `endian`, `compiler_spec`, `capabilities` (plus backend extras). `min_address`/`max_address` cover the loaded image only, and both bounds come from a single address space (the default one unless it holds no qualifying block). Excluded are blocks Ghidra marks *artificial* because a loader or analyzer fabricated them (the PE `tdb` thread-environment block, the ELF `EXTERNAL` import block) and blocks outside a loaded memory space (ELF section headers and other overlay/OTHER blocks); PE headers are real image content and are kept. If that leaves nothing, the bounds fall back to whatever loaded blocks exist, so the field stays meaningful. `function_count` matches `list_functions.total`; external (import thunk) functions are counted separately in `external_function_count` (Ghidra) and are not listed by `list_functions`. `file_path` is the OS path (the same value `open_database` and `list_databases` report); `executable_path` (Ghidra) is the path as the Ghidra importer recorded it (normalised, may start with `/`). |
 | `get_database_paths` | Get file paths associated with current database (IDA). |
 | `get_database_flags` | Get database flags (IDA). |
 | `set_database_flag` | Set or clear a database flag (IDA). |
@@ -141,7 +141,7 @@ String extraction, pattern searching, and string-to-code reference lookup.
 |------|-------------|
 | `rebuild_string_list` | Rebuild the string list from scratch. Call after patching bytes or defining new data that may create or destroy strings (IDA). |
 | `get_strings` | Extract strings from the binary with optional minimum length and regex filter. Supports batch mode for multiple patterns in one pass. Paginated. |
-| `find_code_by_string` | Find functions that reference strings matching a regex. Combines string search, xref lookup, and function resolution in one call. |
+| `find_code_by_string` | Find functions that reference strings matching a regex. Combines string search, xref lookup, and function resolution in one call. Paginated on both backends; items carry `code_address` (the referencing instruction) and the function. |
 | `search_bytes` | Search for a hex byte pattern. Spaces separate bytes; wildcards (`??`) are supported in IDA only. |
 | `search_text` | Search for text in disassembly mnemonics and operands (not string data — use `get_strings` for that). |
 | `find_immediate` | Find instructions with a specific immediate operand value (IDA). |
@@ -292,7 +292,7 @@ Local type management and type library operations.
 
 | Tool | Description |
 |------|-------------|
-| `list_local_types` | List all local types with ordinal, name, size, and classification. Paginated. |
+| `list_local_types` | List all local types with ordinal, name, size, and classification. Paginated. Optional `filter_pattern` regex on the type name (both backends). |
 | `get_local_type` | Get full type details by name, including struct/union members. |
 | `parse_type_declaration` | Parse a C type declaration into the type library. |
 | `delete_local_type` | Delete a local type by name. |

@@ -557,22 +557,43 @@ class TestDemangledNameFilterValidation:
 
 class TestFindCodeByStringResultSchema:
     def test_valid(self):
+        # #37: the same paginated envelope as Ghidra, plus IDA's whole-database counters
         data = {
-            "results": [
+            "items": [
                 {
                     "string_address": "0x500000",
                     "string_value": "error: %s",
-                    "function_address": "0x401000",
+                    "code_address": "0x401010",
                     "function_name": "log_error",
+                    "function_address": "0x401000",
                 },
             ],
+            "total": 3,
+            "offset": 0,
+            "limit": 1,
+            "has_more": True,
             "total_strings_scanned": 5,
             "unique_functions": 3,
         }
         obj = FindCodeByStringResult.model_validate(data)
-        assert len(obj.results) == 1
-        assert obj.results[0].function_name == "log_error"
+        assert len(obj.items) == 1
+        assert obj.items[0].function_name == "log_error"
+        assert obj.items[0].code_address == "0x401010"
+        assert obj.total == 3
+        assert obj.has_more is True
+        assert obj.total_strings_scanned == 5
+        assert obj.unique_functions == 3
 
     def test_missing_required(self):
         with pytest.raises(ValidationError):
             StringCodeRef.model_validate({"string_address": "0x500000", "string_value": "hello"})
+        # code_address is required too (#37): function fields alone are not enough
+        with pytest.raises(ValidationError):
+            StringCodeRef.model_validate(
+                {
+                    "string_address": "0x500000",
+                    "string_value": "hello",
+                    "function_address": "0x401000",
+                    "function_name": "log_error",
+                }
+            )

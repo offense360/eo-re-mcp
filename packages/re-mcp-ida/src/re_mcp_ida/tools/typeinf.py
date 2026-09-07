@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 
 import ida_nalt
 import ida_typeinf
@@ -19,10 +20,12 @@ from re_mcp_ida.helpers import (
     ANNO_READ_ONLY,
     META_BATCH,
     Address,
+    FilterPattern,
     IDAError,
     Limit,
     Offset,
     async_paginate_iter,
+    compile_filter,
     format_address,
     ida_dispatch,
     is_cancelled,
@@ -362,6 +365,36 @@ def parse_declaration(declaration: str) -> ParsedTypeResult:
     )
 
 
+def iter_local_types(til, filt: re.Pattern | None) -> Iterator[dict]:
+    """Yield one ``LocalTypeSummary`` dict per named ordinal of *til*.
+
+    *filt* (from :func:`compile_filter`) is matched against the type name;
+    ``None`` keeps every named type.  Unnamed ordinals are skipped.  Must run
+    on the IDA thread (the tool dispatches it via ``async_paginate_iter``).
+    """
+    count = ida_typeinf.get_ordinal_count(til)
+    for ordinal in range(1, count + 1):
+        if is_cancelled():
+            return
+        name = ida_typeinf.get_numbered_type_name(til, ordinal)
+        if not name:
+            continue
+        if filt is not None and not filt.search(name):
+            continue
+        tinfo = ida_typeinf.tinfo_t()
+        if tinfo.get_numbered_type(til, ordinal):
+            yield {
+                "ordinal": ordinal,
+                "name": name,
+                "type": str(tinfo),
+                "size": safe_type_size(tinfo.get_size()),
+                "is_struct": tinfo.is_struct(),
+                "is_union": tinfo.is_union(),
+                "is_enum": tinfo.is_enum(),
+                "is_typedef": tinfo.is_typedef(),
+            }
+
+
 def register(mcp: FastMCP):
     @mcp.tool(
         annotations=ANNO_READ_ONLY,
@@ -372,39 +405,24 @@ def register(mcp: FastMCP):
     async def list_local_types(
         offset: Offset = 0,
         limit: Limit = 100,
+        filter_pattern: FilterPattern = "",
     ) -> LocalTypeListResult:
         """List Local Types (C typedefs/enums/structs/funcs from parse_type_declaration).
 
         Returns structs, unions, enums, and typedefs from the local type
         library. Large databases may have hundreds or thousands of types —
-        use pagination or get_local_type to look up specific types by name.
+        use pagination, filter_pattern, or get_local_type to look up
+        specific types by name.
 
         Args:
             offset: Pagination offset.
             limit: Maximum number of results.
+            filter_pattern: Optional regex matched against the type name, like Ghidra's.
         """
+        filt = compile_filter(filter_pattern)
 
         def _iter():
-            til = ida_typeinf.get_idati()
-            count = ida_typeinf.get_ordinal_count(til)
-            for ordinal in range(1, count + 1):
-                if is_cancelled():
-                    return
-                name = ida_typeinf.get_numbered_type_name(til, ordinal)
-                if not name:
-                    continue
-                tinfo = ida_typeinf.tinfo_t()
-                if tinfo.get_numbered_type(til, ordinal):
-                    yield {
-                        "ordinal": ordinal,
-                        "name": name,
-                        "type": str(tinfo),
-                        "size": safe_type_size(tinfo.get_size()),
-                        "is_struct": tinfo.is_struct(),
-                        "is_union": tinfo.is_union(),
-                        "is_enum": tinfo.is_enum(),
-                        "is_typedef": tinfo.is_typedef(),
-                    }
+            yield from iter_local_types(ida_typeinf.get_idati(), filt)
 
         return LocalTypeListResult(**await async_paginate_iter(_iter(), offset, limit))
 
