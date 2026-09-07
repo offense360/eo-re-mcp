@@ -1,7 +1,7 @@
 [project]
-name = "re-mcp-core"
-version = "3.1.0"
-description = "Shared infrastructure for reverse-engineering MCP backends"
+name = "eo-re-mcp-core"
+version = "1.0.0"
+description = "Shared infrastructure for the eo-re-mcp reverse-engineering MCP backends"
 license = "MIT OR Apache-2.0"
 authors = [
     { name = "Joe T. Sylve, Ph.D.", email = "joe.sylve@gmail.com" }
@@ -24,6 +24,12 @@ dependencies = [
     "restrictedpython>=8.1,<9",
     "uvicorn>=0.34,<1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/offense360/eo-re-mcp"
+Repository = "https://github.com/offense360/eo-re-mcp"
+Issues = "https://github.com/offense360/eo-re-mcp/issues"
+Documentation = "https://github.com/offense360/eo-re-mcp/tree/main/docs"
 
 [project.scripts]
 re-mcp = "re_mcp.supervisor:main"

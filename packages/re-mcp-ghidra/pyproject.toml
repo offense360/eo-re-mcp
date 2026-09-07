@@ -1,7 +1,7 @@
 [project]
-name = "re-mcp-ghidra"
-version = "3.1.0"
-description = "Ghidra backend for re-mcp — headless Ghidra MCP server using pyghidra"
+name = "eo-re-mcp-ghidra"
+version = "1.0.0"
+description = "Ghidra backend for eo-re-mcp — headless Ghidra MCP server using pyghidra"
 license = "MIT OR Apache-2.0"
 authors = [
     { name = "Joe T. Sylve, Ph.D.", email = "joe.sylve@gmail.com" }
@@ -18,16 +18,16 @@ classifiers = [
 ]
 readme = "README.md"
 dependencies = [
-    "re-mcp-core>=0.1.0",
+    "eo-re-mcp-core>=1.0.0",
     "pyghidra>=3.0",
     "jpype1>=1.5,<1.7",
 ]
 
 [project.urls]
-Homepage = "https://github.com/jtsylve/ida-mcp"
-Repository = "https://github.com/jtsylve/ida-mcp"
-Issues = "https://github.com/jtsylve/ida-mcp/issues"
-Documentation = "https://github.com/jtsylve/ida-mcp/tree/main/docs"
+Homepage = "https://github.com/offense360/eo-re-mcp"
+Repository = "https://github.com/offense360/eo-re-mcp"
+Issues = "https://github.com/offense360/eo-re-mcp/issues"
+Documentation = "https://github.com/offense360/eo-re-mcp/tree/main/docs"
 
 [project.scripts]
 re-mcp-ghidra = "re_mcp_ghidra._cli:main"

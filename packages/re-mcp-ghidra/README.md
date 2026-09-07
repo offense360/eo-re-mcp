@@ -1,6 +1,6 @@
-# re-mcp-ghidra
+# eo-re-mcp-ghidra
 
-Ghidra backend for [RE-MCP](https://github.com/jtsylve/ida-mcp) — a headless [Ghidra](https://ghidra-sre.org/) MCP server using [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra). Exposes Ghidra's analysis capabilities over the [Model Context Protocol](https://modelcontextprotocol.io/), letting LLMs drive reverse engineering directly.
+Ghidra backend for [eo-re-mcp](https://github.com/offense360/eo-re-mcp) — a headless [Ghidra](https://ghidra-sre.org/) MCP server using [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra). Exposes Ghidra's analysis capabilities over the [Model Context Protocol](https://modelcontextprotocol.io/), letting LLMs drive reverse engineering directly.
 
 This is a standalone server, not a Ghidra plugin. It uses pyghidra to run Ghidra's analysis engine without a GUI.
 
@@ -13,14 +13,16 @@ This is a standalone server, not a Ghidra plugin. It uses pyghidra to run Ghidra
 
 ## Installation
 
+`eo-re-mcp-ghidra` is not on PyPI (`pip install re-mcp-ghidra` installs upstream's last release). Install from the GitHub release wheels: download `eo_re_mcp_core-1.0.0-py3-none-any.whl` and `eo_re_mcp_ghidra-1.0.0-py3-none-any.whl` from the [releases page](https://github.com/offense360/eo-re-mcp/releases), then:
+
 ```bash
-uv tool install re-mcp-ghidra
+uv tool install ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl
 ```
 
 Or with pip:
 
 ```bash
-pip install re-mcp-ghidra
+pip install eo_re_mcp_core-1.0.0-py3-none-any.whl eo_re_mcp_ghidra-1.0.0-py3-none-any.whl
 ```
 
 ## Finding Ghidra
@@ -31,7 +33,7 @@ The server looks for your Ghidra installation in the following order:
 2. **Config file** — `ghidra-install-dir` in `~/.ghidra/ghidra-config.json`.
 3. **Platform-specific default paths** (e.g. `/Applications/ghidra_*` on macOS).
 
-See the [main documentation](https://github.com/jtsylve/ida-mcp#finding-ghidra) for the full list of default search paths per platform.
+See the [main documentation](https://github.com/offense360/eo-re-mcp#finding-ghidra) for the full list of default search paths per platform.
 
 ## Usage
 
@@ -40,7 +42,7 @@ See the [main documentation](https://github.com/jtsylve/ida-mcp#finding-ghidra) 
 re-mcp-ghidra
 
 # Or with uvx (no install needed)
-uvx re-mcp-ghidra
+uvx --from ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ghidra
 ```
 
 ### MCP client configuration
@@ -49,8 +51,7 @@ uvx re-mcp-ghidra
 {
   "mcpServers": {
     "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"]
+      "command": "re-mcp-ghidra"
     }
   }
 }
@@ -87,8 +88,8 @@ uvx re-mcp-ghidra
 - Multi-database support with concurrent analysis
 - MCP resources for structured read-only access
 
-See the [main documentation](https://github.com/jtsylve/ida-mcp) for the full tool catalog, multi-database workflows, and detailed usage.
+See the [main documentation](https://github.com/offense360/eo-re-mcp) for the full tool catalog, multi-database workflows, and detailed usage.
 
 ## License
 
-Dual-licensed under [MIT](https://github.com/jtsylve/ida-mcp/blob/main/LICENSES/MIT.txt) and [Apache-2.0](https://github.com/jtsylve/ida-mcp/blob/main/LICENSES/Apache-2.0.txt).
+Dual-licensed under [MIT](https://github.com/offense360/eo-re-mcp/blob/main/LICENSES/MIT.txt) and [Apache-2.0](https://github.com/offense360/eo-re-mcp/blob/main/LICENSES/Apache-2.0.txt).

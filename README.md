@@ -1,17 +1,23 @@
-# RE-MCP
+# eo-re-mcp
 
-A multi-backend reverse-engineering [MCP](https://modelcontextprotocol.io/) server. Exposes binary analysis capabilities from [IDA Pro](https://hex-rays.com/ida-pro/) and [Ghidra](https://ghidra-sre.org/) over the Model Context Protocol, letting LLMs drive reverse-engineering tools directly. Supports multiple simultaneous databases through a supervisor/worker architecture.
+eo-re-mcp is a multi-backend reverse-engineering [MCP](https://modelcontextprotocol.io/) server, maintained as a fork of [jtsylve/re-mcp](https://github.com/jtsylve/re-mcp). It exposes binary analysis capabilities from [IDA Pro](https://hex-rays.com/ida-pro/) and [Ghidra](https://ghidra-sre.org/) over the Model Context Protocol, letting LLMs drive reverse-engineering tools directly. Supports multiple simultaneous databases through a supervisor/worker architecture.
 
 Both backends are standalone servers, not plugins. They use headless APIs ([idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library) for IDA, [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) for Ghidra) to run analysis engines without a GUI.
 
-> **Fork notice.** This is [offense360/eo-re-mcp](https://github.com/offense360/eo-re-mcp), a maintained fork of [jtsylve/re-mcp](https://github.com/jtsylve/re-mcp) (upstream inactive since v3.0.3). It is **not published to PyPI**: the `pip install` / `uv tool install` lines below install upstream's last release. To run this fork, install the wheels attached to a [GitHub release](https://github.com/offense360/eo-re-mcp/releases) or install from source. Differences from upstream are listed in [docs/UPSTREAM.md](docs/UPSTREAM.md).
+## About this fork
+
+**eo-re-mcp** is a maintained fork of [jtsylve/re-mcp](https://github.com/jtsylve/re-mcp), forked from upstream `main` at `799239f` (the v3.0.3 line, upstream's last commit on 2026-06-28 UTC). Upstream has been inactive since then. The relationship is documented in detail in [docs/UPSTREAM.md](docs/UPSTREAM.md).
+
+- **Distribution names and versions.** The packages are published as `eo-re-mcp-core`, `eo-re-mcp-ida`, `eo-re-mcp-ghidra` and `eo-re-mcp`, versioned from 1.0.0, so they never collide with upstream's `re-mcp-*` numbers. Import names (`re_mcp`, `re_mcp_ida`, `re_mcp_ghidra`), CLI names (`re-mcp`, `re-mcp-ida`, `re-mcp-ghidra`) and MCP client configurations are unchanged. The fork is **not on PyPI**: `pip install re-mcp-ida` installs upstream's last release, not this fork. Install from the wheels attached to a [GitHub release](https://github.com/offense360/eo-re-mcp/releases) or from source (see Installation).
+- **Upstream pull requests.** All three pull requests open on upstream are merged here with their authors' commits preserved: [#46](https://github.com/jtsylve/re-mcp/pull/46) `analyze_database` / on-demand analysis in `wait_for_analysis` (@shaiku), [#47](https://github.com/jtsylve/re-mcp/pull/47) cryptography 50 (dependabot), and [#48](https://github.com/jtsylve/re-mcp/pull/48) seven Hex-Rays tools for IDA (@Absolucy), each with follow-up fixes verified on IDA 9.4 / Ghidra 12.1.2.
+- **Upstream bugs fixed.** Real-usage verification of both backends on IDA Pro 9.4 and Ghidra 12.1.2 found and fixed more than thirty defects inherited from upstream, among them: Ghidra saves and undo/redo broken by `GhidraProject`'s permanent transaction, IDA's auto-analysis queue discarded on close, imported symbols rendered as slot offsets, `batch` errors triple-encoded, unpaginated 478 KB disassembly responses, and error messages that did not say why a rename, comment or type declaration failed. The complete list with the fix commits is the issue table in [docs/UPSTREAM.md](docs/UPSTREAM.md); each release's notes list what changed.
 
 ## Backends
 
 | Backend | Package | Requirements |
 |---------|---------|--------------|
-| **IDA Pro** | [`re-mcp-ida`](packages/re-mcp-ida/) | IDA Pro 9+ with a valid license |
-| **Ghidra** | [`re-mcp-ghidra`](packages/re-mcp-ghidra/) | Ghidra 12+, JDK 21+ |
+| **IDA Pro** | [`eo-re-mcp-ida`](packages/re-mcp-ida/) | IDA Pro 9+ with a valid license |
+| **Ghidra** | [`eo-re-mcp-ghidra`](packages/re-mcp-ghidra/) | Ghidra 12+, JDK 21+ |
 
 Both backends share a common tool interface — core analysis tools use the same names, parameters, and response shapes — so LLM workflows are portable across backends. Each backend also has tools for platform-specific features (e.g. IDA: file region mapping, executable rebuilding, IDC evaluation, IDAPython scripting; Ghidra: Function ID analysis, data type archives).
 
@@ -24,32 +30,27 @@ Both backends share a common tool interface — core analysis tools use the same
 
 ## Installation
 
-Install individual backend packages directly, or install `re-mcp` and select a backend with `--backend`:
+eo-re-mcp is not on PyPI (`pip install re-mcp-ida` installs upstream's last release). Install the backend packages you need from the wheels attached to a [GitHub release](https://github.com/offense360/eo-re-mcp/releases), or from source. Every backend needs `eo-re-mcp-core` alongside it; the core package also provides the unified `re-mcp` CLI, which selects a backend with `--backend`.
+
+### From a GitHub release
+
+Download the wheels from the [releases page](https://github.com/offense360/eo-re-mcp/releases) into the current directory, then:
 
 ```bash
 # Individual backend packages (each provides its own CLI)
-uv tool install re-mcp-ida
-uv tool install re-mcp-ghidra
+uv tool install ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl
+uv tool install ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl
 
 # Or install the core package and use --backend to select
-uv tool install re-mcp --with re-mcp-ida --with re-mcp-ghidra
+uv tool install ./eo_re_mcp_core-1.0.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl
 ```
 
 With pip:
 
 ```bash
-pip install re-mcp-ida        # IDA only
-pip install re-mcp-ghidra     # Ghidra only
-pip install re-mcp re-mcp-ida re-mcp-ghidra  # Unified CLI with both backends
-```
-
-### From a GitHub release (this fork)
-
-Download the wheels from the [releases page](https://github.com/offense360/eo-re-mcp/releases) and install the ones you need:
-
-```bash
-pip install re_mcp_core-3.1.0-py3-none-any.whl re_mcp_ida-3.1.0-py3-none-any.whl     # IDA
-pip install re_mcp_core-3.1.0-py3-none-any.whl re_mcp_ghidra-3.1.0-py3-none-any.whl  # Ghidra
+pip install eo_re_mcp_core-1.0.0-py3-none-any.whl eo_re_mcp_ida-1.0.0-py3-none-any.whl     # IDA only
+pip install eo_re_mcp_core-1.0.0-py3-none-any.whl eo_re_mcp_ghidra-1.0.0-py3-none-any.whl  # Ghidra only
+pip install eo_re_mcp_core-1.0.0-py3-none-any.whl eo_re_mcp_ida-1.0.0-py3-none-any.whl eo_re_mcp_ghidra-1.0.0-py3-none-any.whl  # Both backends and the unified CLI
 ```
 
 ### From source
@@ -108,12 +109,12 @@ Each backend has its own CLI, or use the unified `re-mcp` command with `--backen
 
 ```bash
 # Individual backend CLIs
-uvx re-mcp-ida
-uvx re-mcp-ghidra
+re-mcp-ida
+re-mcp-ghidra
 
 # Unified CLI (requires backend package installed alongside)
-uvx --with re-mcp-ida re-mcp --backend ida
-uvx --with re-mcp-ghidra re-mcp --backend ghidra
+re-mcp --backend ida
+re-mcp --backend ghidra
 ```
 
 Both CLIs support the same subcommands:
@@ -132,32 +133,34 @@ For persistent state across reconnections, use `<backend> proxy`. This mode auto
 
 ### Running without installing
 
+`uvx` can run the release wheels directly (`--from` names the wheel that provides the command, `--with` adds the core package):
+
 ```bash
 # Individual backend packages
-IDADIR=/path/to/ida uvx re-mcp-ida
-GHIDRA_INSTALL_DIR=/path/to/ghidra uvx re-mcp-ghidra
+IDADIR=/path/to/ida uvx --from ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ida
+GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --from ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ghidra
 
 # Unified package
-IDADIR=/path/to/ida uvx --with re-mcp-ida re-mcp --backend ida
-GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --with re-mcp-ghidra re-mcp --backend ghidra
+IDADIR=/path/to/ida uvx --from ./eo_re_mcp_core-1.0.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.0.0-py3-none-any.whl re-mcp --backend ida
+GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --from ./eo_re_mcp_core-1.0.0-py3-none-any.whl --with ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl re-mcp --backend ghidra
 ```
 
 ```powershell
 # Individual backend packages
 $env:IDADIR = "C:\Program Files\IDA Professional 9.3"
-uvx re-mcp-ida
+uvx --from ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ida
 
 $env:GHIDRA_INSTALL_DIR = "C:\ghidra_12.0.3_PUBLIC"
-uvx re-mcp-ghidra
+uvx --from ./eo_re_mcp_ghidra-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ghidra
 
 # Unified package
 $env:IDADIR = "C:\Program Files\IDA Professional 9.3"
-uvx --with re-mcp-ida re-mcp --backend ida
+uvx --from ./eo_re_mcp_core-1.0.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.0.0-py3-none-any.whl re-mcp --backend ida
 ```
 
 ### MCP client configuration
 
-Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`):
+Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`). The examples use the installed command names (`uv tool install` and `pip install` both put them on your `PATH`):
 
 **IDA backend:**
 
@@ -165,8 +168,7 @@ Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`)
 {
   "mcpServers": {
     "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"]
+      "command": "re-mcp-ida"
     }
   }
 }
@@ -178,8 +180,7 @@ Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`)
 {
   "mcpServers": {
     "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"]
+      "command": "re-mcp-ghidra"
     }
   }
 }
@@ -191,18 +192,16 @@ Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`)
 {
   "mcpServers": {
     "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"]
+      "command": "re-mcp-ida"
     },
     "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"]
+      "command": "re-mcp-ghidra"
     }
   }
 }
 ```
 
-**Using the unified `re-mcp` CLI (when installed via `uv tool install re-mcp --with re-mcp-ida`):**
+**Using the unified `re-mcp` CLI (when installed via `uv tool install ./eo_re_mcp_core-1.0.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.0.0-py3-none-any.whl`):**
 
 ```json
 {
@@ -210,18 +209,6 @@ Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`)
     "ida": {
       "command": "re-mcp",
       "args": ["--backend", "ida"]
-    }
-  }
-}
-```
-
-If the backend command is installed on your `PATH` (e.g. via `pip install`), use it directly:
-
-```json
-{
-  "mcpServers": {
-    "ida": {
-      "command": "re-mcp-ida"
     }
   }
 }
@@ -245,15 +232,13 @@ If the backend (IDA or Ghidra) isn't in a default location, add the install dire
 {
   "mcpServers": {
     "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"],
+      "command": "re-mcp-ida",
       "env": {
         "IDADIR": "/path/to/ida"
       }
     },
     "ghidra": {
-      "command": "uvx",
-      "args": ["re-mcp-ghidra"],
+      "command": "re-mcp-ghidra",
       "env": {
         "GHIDRA_INSTALL_DIR": "/path/to/ghidra"
       }
@@ -412,9 +397,9 @@ The server provides [MCP prompts](https://modelcontextprotocol.io/docs/concepts/
 
 The project is a monorepo with three packages:
 
-- [`re-mcp-core`](packages/re-mcp-core/) — shared supervisor infrastructure, transport, and common utilities
-- [`re-mcp-ida`](packages/re-mcp-ida/) — IDA Pro backend
-- [`re-mcp-ghidra`](packages/re-mcp-ghidra/) — Ghidra backend
+- [`eo-re-mcp-core`](packages/re-mcp-core/) — shared supervisor infrastructure, transport, and common utilities
+- [`eo-re-mcp-ida`](packages/re-mcp-ida/) — IDA Pro backend
+- [`eo-re-mcp-ghidra`](packages/re-mcp-ghidra/) — Ghidra backend
 
 See [docs/architecture.md](docs/architecture.md) for detailed architecture documentation.
 
@@ -447,4 +432,4 @@ This project is [REUSE compliant](https://reuse.software/).
 
 ---
 
-*IDA Pro and Hex-Rays are trademarks of Hex-Rays SA. Ghidra is developed by the NSA. RE-MCP is an independent project and is not affiliated with or endorsed by Hex-Rays or the NSA.*
+*IDA Pro and Hex-Rays are trademarks of Hex-Rays SA. Ghidra is developed by the NSA. eo-re-mcp is an independent project and is not affiliated with or endorsed by Hex-Rays or the NSA.*

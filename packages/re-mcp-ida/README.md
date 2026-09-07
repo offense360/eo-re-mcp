@@ -1,6 +1,6 @@
-# re-mcp-ida
+# eo-re-mcp-ida
 
-IDA Pro backend for [RE-MCP](https://github.com/jtsylve/ida-mcp) — a headless [IDA Pro](https://hex-rays.com/ida-pro/) MCP server using [idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library). Exposes IDA's full analysis capabilities over the [Model Context Protocol](https://modelcontextprotocol.io/), letting LLMs drive reverse engineering directly.
+IDA Pro backend for [eo-re-mcp](https://github.com/offense360/eo-re-mcp) — a headless [IDA Pro](https://hex-rays.com/ida-pro/) MCP server using [idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library). Exposes IDA's full analysis capabilities over the [Model Context Protocol](https://modelcontextprotocol.io/), letting LLMs drive reverse engineering directly.
 
 This is a standalone server, not an IDA plugin. It uses idalib to run IDA's analysis engine without a GUI.
 
@@ -12,14 +12,16 @@ This is a standalone server, not an IDA plugin. It uses idalib to run IDA's anal
 
 ## Installation
 
+`eo-re-mcp-ida` is not on PyPI (`pip install re-mcp-ida` installs upstream's last release). Install from the GitHub release wheels: download `eo_re_mcp_core-1.0.0-py3-none-any.whl` and `eo_re_mcp_ida-1.0.0-py3-none-any.whl` from the [releases page](https://github.com/offense360/eo-re-mcp/releases), then:
+
 ```bash
-uv tool install re-mcp-ida
+uv tool install ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl
 ```
 
 Or with pip:
 
 ```bash
-pip install re-mcp-ida
+pip install eo_re_mcp_core-1.0.0-py3-none-any.whl eo_re_mcp_ida-1.0.0-py3-none-any.whl
 ```
 
 ## Finding IDA Pro
@@ -30,7 +32,7 @@ The server looks for your IDA Pro installation in the following order:
 2. **IDA's config file** — `Paths.ida-install-dir` in `~/.idapro/ida-config.json` (macOS/Linux) or `%APPDATA%\Hex-Rays\IDA Pro\ida-config.json` (Windows).
 3. **Platform-specific default paths** (e.g. `/Applications/IDA Professional *.app/Contents/MacOS` on macOS).
 
-See the [main documentation](https://github.com/jtsylve/ida-mcp#finding-ida-pro) for the full list of default search paths per platform.
+See the [main documentation](https://github.com/offense360/eo-re-mcp#finding-ida-pro) for the full list of default search paths per platform.
 
 ## Usage
 
@@ -39,7 +41,7 @@ See the [main documentation](https://github.com/jtsylve/ida-mcp#finding-ida-pro)
 re-mcp-ida
 
 # Or with uvx (no install needed)
-uvx re-mcp-ida
+uvx --from ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ida
 ```
 
 ### MCP client configuration
@@ -48,8 +50,7 @@ uvx re-mcp-ida
 {
   "mcpServers": {
     "ida": {
-      "command": "uvx",
-      "args": ["re-mcp-ida"]
+      "command": "re-mcp-ida"
     }
   }
 }
@@ -88,8 +89,8 @@ uvx re-mcp-ida
 - Multi-database support with concurrent analysis
 - MCP resources for structured read-only access
 
-See the [main documentation](https://github.com/jtsylve/ida-mcp) for the full tool catalog, multi-database workflows, and detailed usage.
+See the [main documentation](https://github.com/offense360/eo-re-mcp) for the full tool catalog, multi-database workflows, and detailed usage.
 
 ## License
 
-Dual-licensed under [MIT](https://github.com/jtsylve/ida-mcp/blob/main/LICENSES/MIT.txt) and [Apache-2.0](https://github.com/jtsylve/ida-mcp/blob/main/LICENSES/Apache-2.0.txt).
+Dual-licensed under [MIT](https://github.com/offense360/eo-re-mcp/blob/main/LICENSES/MIT.txt) and [Apache-2.0](https://github.com/offense360/eo-re-mcp/blob/main/LICENSES/Apache-2.0.txt).

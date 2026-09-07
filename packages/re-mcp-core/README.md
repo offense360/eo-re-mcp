@@ -1,8 +1,8 @@
-# re-mcp-core
+# eo-re-mcp-core
 
-Shared infrastructure for reverse-engineering MCP backends. This package provides the supervisor/worker architecture, transport layer, and common utilities that backend packages (`re-mcp-ida`, `re-mcp-ghidra`) build on.
+Shared infrastructure for the [eo-re-mcp](https://github.com/offense360/eo-re-mcp) reverse-engineering MCP backends. This package provides the supervisor/worker architecture, transport layer, and common utilities that backend packages (`eo-re-mcp-ida`, `eo-re-mcp-ghidra`) build on.
 
-This package is not intended to be used directly — install a backend package instead. See the [main documentation](https://github.com/jtsylve/ida-mcp) for user-facing documentation.
+This package is not intended to be used directly — install a backend package instead. See the [main documentation](https://github.com/offense360/eo-re-mcp) for user-facing documentation.
 
 ## What's included
 
@@ -19,4 +19,4 @@ This package is not intended to be used directly — install a backend package i
 
 ## License
 
-Dual-licensed under [MIT](https://github.com/jtsylve/ida-mcp/blob/main/LICENSES/MIT.txt) and [Apache-2.0](https://github.com/jtsylve/ida-mcp/blob/main/LICENSES/Apache-2.0.txt).
+Dual-licensed under [MIT](https://github.com/offense360/eo-re-mcp/blob/main/LICENSES/MIT.txt) and [Apache-2.0](https://github.com/offense360/eo-re-mcp/blob/main/LICENSES/Apache-2.0.txt).

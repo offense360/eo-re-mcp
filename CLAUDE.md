@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Multi-backend reverse-engineering MCP server. Python + FastMCP, stdio and streamable HTTP transports. Backends: IDA Pro (idalib) and Ghidra (pyghidra).
+eo-re-mcp (fork of jtsylve/re-mcp). Multi-backend reverse-engineering MCP server. Python + FastMCP, stdio and streamable HTTP transports. Backends: IDA Pro (idalib) and Ghidra (pyghidra).
 
 ## Commands
 
@@ -26,9 +26,9 @@ Pre-commit hooks run REUSE compliance checks, ruff lint (with `--fix --exit-non-
 
 See `docs/architecture.md` for full details. The project is a monorepo with three packages:
 
-- **`re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`): generic MCP supervisor infrastructure — `supervisor.py`, `daemon.py`, `proxy.py`, `worker_provider.py`, `backend.py`, `server.py`, `context.py`, `exceptions.py`, `helpers.py`, `models.py`, `sandbox.py`, `transforms.py`, `_process.py`
-- **`re-mcp-ida`** (`packages/re-mcp-ida/src/re_mcp_ida/`): IDA-specific backend — `backend.py`, `server.py`, `session.py`, `helpers.py`, `exceptions.py`, `models.py`, `transforms.py`, `_cli.py`, `tools/`, `resources.py`, `prompts/`
-- **`re-mcp-ghidra`** (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`): Ghidra-specific backend — `backend.py`, `server.py`, `session.py`, `helpers.py`, `exceptions.py`, `models.py`, `transforms.py`, `_cli.py`, `tools/`, `resources.py`, `prompts/`
+- **`eo-re-mcp-core`** (`packages/re-mcp-core/src/re_mcp/`): generic MCP supervisor infrastructure — `supervisor.py`, `daemon.py`, `proxy.py`, `worker_provider.py`, `backend.py`, `server.py`, `context.py`, `exceptions.py`, `helpers.py`, `models.py`, `sandbox.py`, `transforms.py`, `_process.py`
+- **`eo-re-mcp-ida`** (`packages/re-mcp-ida/src/re_mcp_ida/`): IDA-specific backend — `backend.py`, `server.py`, `session.py`, `helpers.py`, `exceptions.py`, `models.py`, `transforms.py`, `_cli.py`, `tools/`, `resources.py`, `prompts/`
+- **`eo-re-mcp-ghidra`** (`packages/re-mcp-ghidra/src/re_mcp_ghidra/`): Ghidra-specific backend — `backend.py`, `server.py`, `session.py`, `helpers.py`, `exceptions.py`, `models.py`, `transforms.py`, `_cli.py`, `tools/`, `resources.py`, `prompts/`
 
 Key points for editing:
 
