@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "eo-re-mcp"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "eo-re-mcp-core" },
@@ -355,7 +355,7 @@ dev = [
 
 [[package]]
 name = "eo-re-mcp-core"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "packages/re-mcp-core" }
 dependencies = [
     { name = "fastmcp", extra = ["code-mode"] },
@@ -376,7 +376,7 @@ requires-dist = [
 
 [[package]]
 name = "eo-re-mcp-ghidra"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "packages/re-mcp-ghidra" }
 dependencies = [
     { name = "eo-re-mcp-core" },
@@ -393,7 +393,7 @@ requires-dist = [
 
 [[package]]
 name = "eo-re-mcp-ida"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "packages/re-mcp-ida" }
 dependencies = [
     { name = "eo-re-mcp-core" },

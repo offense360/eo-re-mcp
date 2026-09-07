@@ -12,16 +12,16 @@ This is a standalone server, not an IDA plugin. It uses idalib to run IDA's anal
 
 ## Installation
 
-`eo-re-mcp-ida` is not on PyPI (`pip install re-mcp-ida` installs upstream's last release). Install from the GitHub release wheels: download `eo_re_mcp_core-1.0.0-py3-none-any.whl` and `eo_re_mcp_ida-1.0.0-py3-none-any.whl` from the [releases page](https://github.com/offense360/eo-re-mcp/releases), then:
+`eo-re-mcp-ida` is not on PyPI (`pip install re-mcp-ida` installs upstream's last release). Install from the GitHub release wheels: download `eo_re_mcp_core-1.1.0-py3-none-any.whl` and `eo_re_mcp_ida-1.1.0-py3-none-any.whl` from the [releases page](https://github.com/offense360/eo-re-mcp/releases), then:
 
 ```bash
-uv tool install ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl
+uv tool install ./eo_re_mcp_ida-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl
 ```
 
 Or with pip:
 
 ```bash
-pip install eo_re_mcp_core-1.0.0-py3-none-any.whl eo_re_mcp_ida-1.0.0-py3-none-any.whl
+pip install eo_re_mcp_core-1.1.0-py3-none-any.whl eo_re_mcp_ida-1.1.0-py3-none-any.whl
 ```
 
 ## Finding IDA Pro
@@ -41,7 +41,7 @@ See the [main documentation](https://github.com/offense360/eo-re-mcp#finding-ida
 re-mcp-ida
 
 # Or with uvx (no install needed)
-uvx --from ./eo_re_mcp_ida-1.0.0-py3-none-any.whl --with ./eo_re_mcp_core-1.0.0-py3-none-any.whl re-mcp-ida
+uvx --from ./eo_re_mcp_ida-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl re-mcp-ida
 ```
 
 ### MCP client configuration
