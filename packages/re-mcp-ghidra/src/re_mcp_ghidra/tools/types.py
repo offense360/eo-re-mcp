@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -60,6 +62,23 @@ class ApplyTypeResult(BaseModel):
     status: str
 
 
+_PROTOTYPE_RE = re.compile(r"^\s*[\w\s\*&:<>,]+?\s+[\w:~]+\s*\(")
+
+
+def looks_like_prototype(type_string: str) -> bool:
+    """True when *type_string* reads as a C function prototype, not a data type (#36).
+
+    A prototype has a parenthesised parameter list and at least two identifiers
+    before the first ``(`` (a return type and a function name):
+    ``"int foo(int)"``, ``"void __fastcall handler(void *ctx)"``.  Plain types
+    (``"int"``, ``"char *"``, ``"struct foo"``) and unnamed function pointer types
+    (``"void (*)(int)"``) are not prototypes.
+    """
+    if "(" not in type_string or ")" not in type_string:
+        return False
+    return _PROTOTYPE_RE.match(type_string) is not None
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"types"})
     @session.require_open
@@ -101,12 +120,26 @@ def register(mcp: FastMCP) -> None:
         Args:
             address: Target address.
             type_string: C type string (e.g. "int", "char *", "struct foo").
+                For a function's C prototype use set_function_type instead.
         """
         from re_mcp_ghidra.tools.structs import _parse_data_type  # noqa: PLC0415
 
         program = session.program
         listing = program.getListing()
         addr = resolve_address(address)
+
+        # A prototype at a function entry is a set_function_type call in
+        # disguise; the data-type parser would only say "Unknown data type:
+        # '<the whole prototype>'" (#36).
+        func = program.getFunctionManager().getFunctionAt(addr)
+        if func is not None and looks_like_prototype(type_string):
+            raise GhidraError(
+                f"{format_address(addr.getOffset())} is the entry of function "
+                f"{func.getName()} and {type_string!r} is a function prototype; "
+                "set_type applies a data type at an address - use "
+                "set_function_type(address, prototype) instead",
+                error_type="InvalidArgument",
+            )
 
         dt = _parse_data_type(type_string)
         if dt.getLength() > 0:
