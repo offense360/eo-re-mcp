@@ -292,7 +292,7 @@ Local type management and type library operations.
 
 | Tool | Description |
 |------|-------------|
-| `list_local_types` | List all local types with ordinal, name, size, and classification. Paginated. |
+| `list_local_types` | List all local types with ordinal, name, size, and classification. Paginated. Optional `filter_pattern` regex on the type name (both backends). |
 | `get_local_type` | Get full type details by name, including struct/union members. |
 | `parse_type_declaration` | Parse a C type declaration into the type library. |
 | `delete_local_type` | Delete a local type by name. |
