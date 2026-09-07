@@ -20,6 +20,7 @@ from re_mcp_ghidra.helpers import (
     Limit,
     Offset,
     check_range_in_memory,
+    clean_parser_message,
     compile_filter,
     format_address,
     paginate_iter,
@@ -250,7 +251,10 @@ def register(mcp: FastMCP) -> None:
         except GhidraError:
             raise
         except Exception as e:
-            raise GhidraError(f"Failed to parse declaration: {e}", error_type="ParseError") from e
+            raise GhidraError(
+                f"Failed to parse declaration: {clean_parser_message(str(e))}",
+                error_type="ParseError",
+            ) from e
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
