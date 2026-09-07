@@ -13,7 +13,9 @@ import ida_funcs
 import ida_ida
 import ida_idp
 import ida_loader
+import ida_nalt
 import ida_segment
+import ida_typeinf
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -81,6 +83,17 @@ class DatabaseInfoResult(BaseModel):
     min_address: str = Field(description="Minimum address (hex).")
     max_address: str = Field(description="Maximum address (hex).")
     entry_point: str = Field(description="Entry point address (hex).")
+    image_base: str = Field(description="Image base address (hex)")
+    endian: str = Field(description="'little' or 'big'")
+    compiler_spec: str = Field(
+        description=(
+            "Compiler identification: IDA's compiler name (e.g. 'Visual C++'), "
+            "Ghidra's compiler spec id (e.g. 'windows')"
+        )
+    )
+    capabilities: dict[str, bool] = Field(
+        description="Available capabilities: decompiler, assembler, undo"
+    )
     function_count: int = Field(description="Number of functions.")
     segment_count: int = Field(description="Number of segments.")
     entry_point_count: int = Field(description="Number of entry points.")
@@ -279,7 +292,12 @@ def register(mcp: FastMCP):
     )
     @session.require_open
     def get_database_info() -> DatabaseInfoResult:
-        """Get database metadata (arch, bitness, file type, address range, counts)."""
+        """Get database metadata (arch, bitness, file type, address range, counts).
+
+        Shares a core set with Ghidra: `entry_point`, `image_base`, `endian`,
+        `compiler_spec` (IDA's compiler name, e.g. 'Visual C++') and
+        `capabilities`, plus IDA's own extras.
+        """
         return DatabaseInfoResult(
             file_path=session.current_path,
             processor=ida_idp.get_idp_name(),
@@ -288,6 +306,10 @@ def register(mcp: FastMCP):
             min_address=format_address(ida_ida.inf_get_min_ea()),
             max_address=format_address(ida_ida.inf_get_max_ea()),
             entry_point=format_address(ida_ida.inf_get_start_ea()),
+            image_base=format_address(ida_nalt.get_imagebase()),
+            endian="big" if ida_ida.inf_is_be() else "little",
+            compiler_spec=ida_typeinf.get_compiler_name(ida_ida.inf_get_cc_id()) or "unknown",
+            capabilities=dict(session.capabilities),
             function_count=ida_funcs.get_func_qty(),
             segment_count=ida_segment.get_segm_qty(),
             entry_point_count=ida_entry.get_entry_qty(),
