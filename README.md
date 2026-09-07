@@ -4,6 +4,8 @@ A multi-backend reverse-engineering [MCP](https://modelcontextprotocol.io/) serv
 
 Both backends are standalone servers, not plugins. They use headless APIs ([idalib](https://docs.hex-rays.com/release-notes/9_0#idalib-ida-as-a-library) for IDA, [pyghidra](https://github.com/NationalSecurityAgency/ghidra/tree/master/Ghidra/Features/PyGhidra) for Ghidra) to run analysis engines without a GUI.
 
+> **Fork notice.** This is [offense360/eo-re-mcp](https://github.com/offense360/eo-re-mcp), a maintained fork of [jtsylve/re-mcp](https://github.com/jtsylve/re-mcp) (upstream inactive since v3.0.3). It is **not published to PyPI**: the `pip install` / `uv tool install` lines below install upstream's last release. To run this fork, install the wheels attached to a [GitHub release](https://github.com/offense360/eo-re-mcp/releases) or install from source. Differences from upstream are listed in [docs/UPSTREAM.md](docs/UPSTREAM.md).
+
 ## Backends
 
 | Backend | Package | Requirements |
@@ -41,17 +43,26 @@ pip install re-mcp-ghidra     # Ghidra only
 pip install re-mcp re-mcp-ida re-mcp-ghidra  # Unified CLI with both backends
 ```
 
+### From a GitHub release (this fork)
+
+Download the wheels from the [releases page](https://github.com/offense360/eo-re-mcp/releases) and install the ones you need:
+
+```bash
+pip install re_mcp_core-3.1.0-py3-none-any.whl re_mcp_ida-3.1.0-py3-none-any.whl     # IDA
+pip install re_mcp_core-3.1.0-py3-none-any.whl re_mcp_ghidra-3.1.0-py3-none-any.whl  # Ghidra
+```
+
 ### From source
 
 ```bash
-git clone https://github.com/jtsylve/ida-mcp && cd ida-mcp
+git clone https://github.com/offense360/eo-re-mcp && cd eo-re-mcp
 uv sync
 ```
 
 Or with pip:
 
 ```bash
-git clone https://github.com/jtsylve/ida-mcp && cd ida-mcp
+git clone https://github.com/offense360/eo-re-mcp && cd eo-re-mcp
 pip install -e packages/re-mcp-core -e packages/re-mcp-ida -e packages/re-mcp-ghidra
 ```
 
