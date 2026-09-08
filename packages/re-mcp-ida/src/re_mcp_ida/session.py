@@ -222,8 +222,9 @@ class Session:
         """Detect which optional features are available for the current database."""
         return {
             "decompiler": bool(ida_hexrays.init_hexrays_plugin()),
-            # Only x86/x64 (metapc) has an assembler in IDA currently.
-            "assembler": ida_idp.get_idp_name() == "metapc",
+            # Only x86/x64 has an assembler in IDA; the module reports itself as
+            # 'pc' on 9.x ('metapc' is the loader-side module name).
+            "assembler": ida_idp.get_idp_name() in ("pc", "metapc"),
             "undo": True,
         }
 
