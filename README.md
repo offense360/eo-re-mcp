@@ -38,19 +38,19 @@ Download the wheels from the [releases page](https://github.com/offense360/eo-re
 
 ```bash
 # Individual backend packages (each provides its own CLI)
-uv tool install ./eo_re_mcp_ida-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl
-uv tool install ./eo_re_mcp_ghidra-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl
+uv tool install ./eo_re_mcp_ida-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl
+uv tool install ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl
 
 # Or install the core package and use --backend to select
-uv tool install ./eo_re_mcp_core-1.1.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.0-py3-none-any.whl --with ./eo_re_mcp_ghidra-1.1.0-py3-none-any.whl
+uv tool install ./eo_re_mcp_core-1.1.1-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.1-py3-none-any.whl --with ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl
 ```
 
 With pip:
 
 ```bash
-pip install eo_re_mcp_core-1.1.0-py3-none-any.whl eo_re_mcp_ida-1.1.0-py3-none-any.whl     # IDA only
-pip install eo_re_mcp_core-1.1.0-py3-none-any.whl eo_re_mcp_ghidra-1.1.0-py3-none-any.whl  # Ghidra only
-pip install eo_re_mcp_core-1.1.0-py3-none-any.whl eo_re_mcp_ida-1.1.0-py3-none-any.whl eo_re_mcp_ghidra-1.1.0-py3-none-any.whl  # Both backends and the unified CLI
+pip install eo_re_mcp_core-1.1.1-py3-none-any.whl eo_re_mcp_ida-1.1.1-py3-none-any.whl     # IDA only
+pip install eo_re_mcp_core-1.1.1-py3-none-any.whl eo_re_mcp_ghidra-1.1.1-py3-none-any.whl  # Ghidra only
+pip install eo_re_mcp_core-1.1.1-py3-none-any.whl eo_re_mcp_ida-1.1.1-py3-none-any.whl eo_re_mcp_ghidra-1.1.1-py3-none-any.whl  # Both backends and the unified CLI
 ```
 
 ### From source
@@ -137,25 +137,25 @@ For persistent state across reconnections, use `<backend> proxy`. This mode auto
 
 ```bash
 # Individual backend packages
-IDADIR=/path/to/ida uvx --from ./eo_re_mcp_ida-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl re-mcp-ida
-GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --from ./eo_re_mcp_ghidra-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl re-mcp-ghidra
+IDADIR=/path/to/ida uvx --from ./eo_re_mcp_ida-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl re-mcp-ida
+GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --from ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl re-mcp-ghidra
 
 # Unified package
-IDADIR=/path/to/ida uvx --from ./eo_re_mcp_core-1.1.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.0-py3-none-any.whl re-mcp --backend ida
-GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --from ./eo_re_mcp_core-1.1.0-py3-none-any.whl --with ./eo_re_mcp_ghidra-1.1.0-py3-none-any.whl re-mcp --backend ghidra
+IDADIR=/path/to/ida uvx --from ./eo_re_mcp_core-1.1.1-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.1-py3-none-any.whl re-mcp --backend ida
+GHIDRA_INSTALL_DIR=/path/to/ghidra uvx --from ./eo_re_mcp_core-1.1.1-py3-none-any.whl --with ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl re-mcp --backend ghidra
 ```
 
 ```powershell
 # Individual backend packages
 $env:IDADIR = "C:\Program Files\IDA Professional 9.3"
-uvx --from ./eo_re_mcp_ida-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl re-mcp-ida
+uvx --from ./eo_re_mcp_ida-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl re-mcp-ida
 
 $env:GHIDRA_INSTALL_DIR = "C:\ghidra_12.0.3_PUBLIC"
-uvx --from ./eo_re_mcp_ghidra-1.1.0-py3-none-any.whl --with ./eo_re_mcp_core-1.1.0-py3-none-any.whl re-mcp-ghidra
+uvx --from ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl re-mcp-ghidra
 
 # Unified package
 $env:IDADIR = "C:\Program Files\IDA Professional 9.3"
-uvx --from ./eo_re_mcp_core-1.1.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.0-py3-none-any.whl re-mcp --backend ida
+uvx --from ./eo_re_mcp_core-1.1.1-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.1-py3-none-any.whl re-mcp --backend ida
 ```
 
 ### MCP client configuration
@@ -201,7 +201,7 @@ Add to your MCP client config (e.g. Claude Desktop `claude_desktop_config.json`)
 }
 ```
 
-**Using the unified `re-mcp` CLI (when installed via `uv tool install ./eo_re_mcp_core-1.1.0-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.0-py3-none-any.whl`):**
+**Using the unified `re-mcp` CLI (when installed via `uv tool install ./eo_re_mcp_core-1.1.1-py3-none-any.whl --with ./eo_re_mcp_ida-1.1.1-py3-none-any.whl`):**
 
 ```json
 {
