@@ -80,6 +80,26 @@ def looks_like_prototype(type_string: str) -> bool:
     return _PROTOTYPE_RE.match(type_string) is not None
 
 
+def refuse_set_type_inside_function(program, addr, force: bool) -> None:
+    """Raise unless *addr* lies outside every function or *force* is set (#49).
+
+    ``set_type`` clears the code units it needs and creates data there, so at a
+    function entry or anywhere in a function body it silently replaces
+    instructions with data.  Unlike the prototype check this covers plain
+    types such as ``"int"`` and every address the function spans.
+    """
+    func = program.getFunctionManager().getFunctionContaining(addr)
+    if func is None or force:
+        return
+    raise GhidraError(
+        f"{format_address(addr.getOffset())} lies inside function {func.getName()} "
+        f"(entry {format_address(func.getEntryPoint().getOffset())}); set_type would "
+        "replace its instructions with data. Use set_function_type for the prototype, "
+        "delete_function first, or pass force=True to overwrite.",
+        error_type="InvalidArgument",
+    )
+
+
 def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=ANNO_READ_ONLY, tags={"types"})
     @session.require_open
@@ -115,13 +135,18 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(annotations=ANNO_MUTATE, tags={"types"})
     @session.require_open
-    def set_type(address: Address, type_string: str) -> SetTypeResult:
+    def set_type(address: Address, type_string: str, force: bool = False) -> SetTypeResult:
         """Apply a data type at an address.
+
+        Refuses an address inside a function (entry or body) because the data
+        would replace the instructions there; use set_function_type for the
+        prototype, delete_function first, or pass force=True to overwrite.
 
         Args:
             address: Target address.
             type_string: C type string (e.g. "int", "char *", "struct foo").
                 For a function's C prototype use set_function_type instead.
+            force: Overwrite instructions inside a function with the data type.
         """
         from re_mcp_ghidra.tools.structs import _parse_data_type  # noqa: PLC0415
 
@@ -141,6 +166,10 @@ def register(mcp: FastMCP) -> None:
                 "set_function_type(address, prototype) instead",
                 error_type="InvalidArgument",
             )
+
+        # A plain type at any address a function spans would turn its
+        # instructions into data (#49).
+        refuse_set_type_inside_function(program, addr, force)
 
         dt = _parse_data_type(type_string)
         if dt.getLength() > 0:
