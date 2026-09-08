@@ -1,6 +1,6 @@
 [project]
 name = "eo-re-mcp-ghidra"
-version = "1.1.0"
+version = "1.1.1"
 description = "Ghidra backend for eo-re-mcp — headless Ghidra MCP server using pyghidra"
 license = "MIT OR Apache-2.0"
 authors = [
