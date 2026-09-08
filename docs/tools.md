@@ -261,7 +261,7 @@ Decompiler interaction — variable management, microcode, and comments.
 | `list_decompiler_variables` | List all variables in a function's pseudocode, with Hex-Rays attributes (BYREF, OVERLAPPED, MAPDST, ...). |
 | `map_decompiler_variable` | Merge one local into another so both locations read as one variable (IDA). |
 | `clear_decompiler_variable_maps` | Drop every variable merge in a function (IDA). |
-| `get_pseudocode_line_map` | Map `decompile_function` line numbers to addresses (IDA). |
+| `get_pseudocode_line_map` | Map `decompile_function` line numbers to addresses (IDA); one pass over the pseudocode anchors; includes label and continuation lines. |
 | `refresh_decompilation` | Drop a function's cached decompilation so the next decompile is fresh (IDA). |
 | `get_microcode` | Get microcode at a given maturity level (IDA). |
 | `set_decompiler_comment` | Set a comment in pseudocode at a specific address. |
