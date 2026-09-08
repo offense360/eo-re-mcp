@@ -6,8 +6,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import ida_hexrays
 import ida_idp
+import ida_lines
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
@@ -132,7 +135,14 @@ class PseudocodeLineMapResult(BaseModel):
     function: str = Field(description="Function address (hex).")
     name: str = Field(description="Function name.")
     line_count: int = Field(description="Total number of pseudocode lines.")
-    lines: list[PseudocodeLine] = Field(description="Lines that map to an address.")
+    lines: list[PseudocodeLine] = Field(
+        description=(
+            "Lines that map to an address: each carries the lowest address among the "
+            "ctree items whose text appears on it (continuation, label and `else` lines "
+            "included; a switch's own anchor on `case` lines and a block's anchor on its "
+            "`}` line are ignored)."
+        )
+    )
 
 
 class RefreshDecompilationResult(BaseModel):
@@ -205,6 +215,77 @@ def drop_cached_decompilation(func_start: int) -> bool:
     was_cached = ida_hexrays.has_cached_cfunc(func_start)
     ida_hexrays.mark_cfunc_dirty(func_start, False)
     return was_cached
+
+
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _color_char(code: str | int) -> str:
+    """``ida_lines.COLOR_*`` codes come as a one-character ``str`` or as an ``int``
+    depending on the binding (idalib on IDA 9.4 hands out an ``int``)."""
+    return code if isinstance(code, str) else chr(code)
+
+
+def iter_line_anchors(line: str) -> Iterator[int]:
+    """Yield the citem index of every COLOR_ADDR anchor in a pseudocode line.
+
+    Hex-Rays prefixes each token of a pseudocode line with ``COLOR_ON COLOR_ADDR``
+    followed by ``COLOR_ADDR_SIZE`` hex digits holding a ``ctree_anchor_t`` value.
+    Only anchors that point at a ctree item are yielded (lvar, itp and block-comment
+    anchors are skipped); truncated or non-hex anchors are ignored.
+    """
+    marker = _color_char(ida_lines.COLOR_ON) + _color_char(ida_lines.COLOR_ADDR)
+    size = int(ida_lines.COLOR_ADDR_SIZE)
+    pos = 0
+    while True:
+        pos = line.find(marker, pos)
+        if pos < 0:
+            return
+        pos += len(marker)
+        digits = line[pos : pos + size]
+        if len(digits) < size:
+            return
+        if not _HEX_DIGITS.issuperset(digits):
+            continue
+        pos += size
+        anchor = ida_hexrays.ctree_anchor_t()
+        anchor.value = int(digits, 16)
+        if anchor.is_citem_anchor():
+            yield anchor.get_index()
+
+
+def build_line_map(cfunc) -> dict[int, int]:
+    """Map each pseudocode line to its lowest address, in one pass over the anchors.
+
+    Rule: a line maps to the lowest ``ea`` among the ctree items anchored on it,
+    except that ``cit_switch`` items are ignored (their anchor sits on every ``case``
+    line and would map them all to the switch head) and a ``cit_block`` item counts
+    only on the first line it appears (its anchor also marks the closing ``}`` and
+    the blank line after the header). Items with ``BADADDR`` and anchors whose index
+    is out of range are skipped. Lines with no contributing item are absent.
+    """
+    sv = cfunc.get_pseudocode()
+    items = cfunc.treeitems
+    n = len(items)
+    seen_blocks: set[int] = set()
+    lowest: dict[int, int] = {}
+    for li in range(sv.size()):
+        pool: list[int] = []
+        for idx in iter_line_anchors(sv[li].line):
+            if not 0 <= idx < n:
+                continue
+            it = items[idx]
+            ea = it.ea
+            if is_bad_addr(ea) or it.op == ida_hexrays.cit_switch:
+                continue
+            if it.op == ida_hexrays.cit_block:
+                if it.index in seen_blocks:
+                    continue
+                seen_blocks.add(it.index)
+            pool.append(ea)
+        if pool:
+            lowest[li] = min(pool)
+    return lowest
 
 
 def _find_lvar(cfunc, name: str):
@@ -529,9 +610,14 @@ def register(mcp: FastMCP):
         """Map decompile_function's pseudocode line numbers to addresses.
 
         Line numbers are 0-based and line up with splitting decompile_function's
-        pseudocode on newlines. Only lines carrying at least one addressable ctree
-        item appear; the address reported is the lowest one on that line. Use it to
-        hand a pseudocode line off to an address-taking tool.
+        pseudocode on newlines. Built from the COLOR_ADDR anchors of each pseudocode
+        line in one pass (a few ms for a 1,400-line function). A line maps to the
+        lowest address among the ctree items whose text appears on it; continuation
+        lines of multi-line statements, label lines and `else` lines are included.
+        A `switch` statement's own anchor (present on every `case` line) is ignored,
+        and a block's anchor counts only on its opening line, so `}` lines do not
+        map to the block start. Use it to hand a pseudocode line off to an
+        address-taking tool.
 
         Args:
             function_address: Address or name of the function.
@@ -540,19 +626,7 @@ def register(mcp: FastMCP):
 
         # treeitems is only populated once the pseudocode has been printed
         sv = cfunc.get_pseudocode()
-
-        lowest: dict[int, int] = {}
-        for item in cfunc.treeitems:
-            ea = item.ea
-            if is_bad_addr(ea):
-                continue
-            coords = cfunc.find_item_coords(item)
-            # returns (None, None) for items that never made it into the listing
-            if not coords or coords[1] is None or coords[1] < 0:
-                continue
-            line = coords[1]
-            if line not in lowest or ea < lowest[line]:
-                lowest[line] = ea
+        lowest = build_line_map(cfunc)
 
         return PseudocodeLineMapResult(
             function=format_address(func.start_ea),
