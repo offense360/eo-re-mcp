@@ -13,16 +13,16 @@ This is a standalone server, not a Ghidra plugin. It uses pyghidra to run Ghidra
 
 ## Installation
 
-`eo-re-mcp-ghidra` is not on PyPI (`pip install re-mcp-ghidra` installs upstream's last release). Install from the GitHub release wheels: download `eo_re_mcp_core-1.1.1-py3-none-any.whl` and `eo_re_mcp_ghidra-1.1.1-py3-none-any.whl` from the [releases page](https://github.com/offense360/eo-re-mcp/releases), then:
+`eo-re-mcp-ghidra` is not on PyPI (`pip install re-mcp-ghidra` installs upstream's last release). Install from the GitHub release wheels: download `eo_re_mcp_core-1.2.0-py3-none-any.whl` and `eo_re_mcp_ghidra-1.2.0-py3-none-any.whl` from the [releases page](https://github.com/offense360/eo-re-mcp/releases), then:
 
 ```bash
-uv tool install ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl
+uv tool install ./eo_re_mcp_ghidra-1.2.0-py3-none-any.whl --with ./eo_re_mcp_core-1.2.0-py3-none-any.whl
 ```
 
 Or with pip:
 
 ```bash
-pip install eo_re_mcp_core-1.1.1-py3-none-any.whl eo_re_mcp_ghidra-1.1.1-py3-none-any.whl
+pip install eo_re_mcp_core-1.2.0-py3-none-any.whl eo_re_mcp_ghidra-1.2.0-py3-none-any.whl
 ```
 
 ## Finding Ghidra
@@ -42,7 +42,7 @@ See the [main documentation](https://github.com/offense360/eo-re-mcp#finding-ghi
 re-mcp-ghidra
 
 # Or with uvx (no install needed)
-uvx --from ./eo_re_mcp_ghidra-1.1.1-py3-none-any.whl --with ./eo_re_mcp_core-1.1.1-py3-none-any.whl re-mcp-ghidra
+uvx --from ./eo_re_mcp_ghidra-1.2.0-py3-none-any.whl --with ./eo_re_mcp_core-1.2.0-py3-none-any.whl re-mcp-ghidra
 ```
 
 ### MCP client configuration
